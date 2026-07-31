@@ -41,3 +41,8 @@ service/relayconvert/chat_responses_live_local_test.go
 service/openaicompat/chat_responses_live_local_test.go
 go.work
 go.work.sum
+
+# Plugin directory (user customizations — tracked files excluded from ignore)
+plugins/*
+!plugins/all.go
+!plugins/_example/
