@@ -8,6 +8,11 @@
 // The main package imports this package to auto-register all active plugins.
 package plugins
 
-// Example plugin — demonstrates plugin capabilities.
-// Remove or comment out this line to disable the example.
-import _ "github.com/QuantumNous/new-api/plugins/_example"
+import (
+	// Example plugin — demonstrates plugin capabilities.
+	// Remove or comment out this line to disable the example.
+	_ "github.com/QuantumNous/new-api/plugins/_example"
+
+	// Custom landing page, replaces the default index at "/".
+	_ "github.com/QuantumNous/new-api/plugins/homepage"
+)
