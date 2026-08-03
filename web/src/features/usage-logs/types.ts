@@ -284,6 +284,19 @@ export interface MidjourneyLog {
 // Task Logs Types
 // ============================================================================
 
+/**
+ * Task-specific metadata. Serialized from Go's `model.Properties`
+ * (see model/task.go), so these three keys are the whole shape.
+ */
+export interface TaskLogProperties {
+  /** The user's original prompt / request payload. */
+  input?: string
+  /** Model actually sent upstream, after model mapping. */
+  upstream_model_name?: string
+  /** Model the user asked for. */
+  origin_model_name?: string
+}
+
 export interface TaskLog {
   id: number
   user_id: number
@@ -293,6 +306,8 @@ export interface TaskLog {
   action: string // MUSIC, LYRICS, GENERATE, TEXT_GENERATE, etc.
   channel_id: number
   submit_time: number // seconds
+  /** Upstream picked the task up; submit_time -> start_time is queue wait. */
+  start_time?: number // seconds
   finish_time?: number // seconds
   progress?: string
   progress_message_en?: string
@@ -302,6 +317,13 @@ export interface TaskLog {
   other?: string
   created_at?: number
   updated_at?: number
+  // Sent by dto.TaskDto but previously undeclared here, so the task log UI had
+  // no way to surface cost, billing group, prompt, or the real result URL.
+  quota?: number
+  group?: string
+  /** Result URL (video address). Falls back to fail_reason server-side. */
+  result_url?: string
+  properties?: TaskLogProperties
 }
 
 // ============================================================================
