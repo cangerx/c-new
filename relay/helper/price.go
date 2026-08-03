@@ -205,7 +205,19 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 				acceptUnsetRatio = true
 			}
 			if !ratioSuccess && !acceptUnsetRatio {
-				return hosttypes.PriceData{}, modelPriceNotConfiguredError(matchName, info.UserId)
+				// 模型未配置价格时，回退到系统默认任务计费设置。
+				// 仅当默认价格配置有效（> 0）时兜底，否则保持报错行为。
+				qs := operation_setting.GetQuotaSetting()
+				if qs.DefaultTaskPrice <= 0 {
+					return hosttypes.PriceData{}, modelPriceNotConfiguredError(matchName, info.UserId)
+				}
+				if qs.DefaultTaskBillingMode == "per_call" {
+					modelPrice = qs.DefaultTaskPrice
+					usePrice = true
+				} else {
+					modelRatio = qs.DefaultTaskPrice
+					ratioSuccess = true
+				}
 			}
 		}
 	}

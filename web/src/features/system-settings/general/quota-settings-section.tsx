@@ -33,6 +33,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
 import { formatQuota } from '@/lib/format'
 
@@ -61,6 +62,8 @@ const quotaSchema = z.object({
   }),
   quota_setting: z.object({
     enable_free_model_pre_consume: z.boolean(),
+    default_task_billing_mode: z.enum(['per_call', 'per_second']),
+    default_task_price: z.coerce.number().min(0),
   }),
 })
 
@@ -262,6 +265,78 @@ export function QuotaSettingsSection({
                 )}
               />
             </SettingsFormGridItem>
+
+            <SettingsFormGridItem span='full'>
+              <FormField
+                control={form.control}
+                name='quota_setting.default_task_billing_mode'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Default Task Billing Mode')}</FormLabel>
+                    <FormControl>
+                      <RadioGroup
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        className='flex flex-col gap-2'
+                        disabled={updateOption.isPending}
+                      >
+                        <div className='flex items-center gap-2'>
+                          <RadioGroupItem
+                            value='per_call'
+                            id='default-task-billing-per-call'
+                          />
+                          <label htmlFor='default-task-billing-per-call'>
+                            {t('Per Call (fixed price per task)')}
+                          </label>
+                        </div>
+                        <div className='flex items-center gap-2'>
+                          <RadioGroupItem
+                            value='per_second'
+                            id='default-task-billing-per-second'
+                          />
+                          <label htmlFor='default-task-billing-per-second'>
+                            {t('Per Second (price per second)')}
+                          </label>
+                        </div>
+                      </RadioGroup>
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Default billing mode for task/video models without a per-model price configured.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </SettingsFormGridItem>
+
+            <FormField
+              control={form.control}
+              name='quota_setting.default_task_price'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Default Task Price')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      step='0.0001'
+                      value={field.value ?? ''}
+                      onChange={handleNumberChange(field.onChange)}
+                      name={field.name}
+                      onBlur={field.onBlur}
+                      ref={field.ref}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Fixed price per task (per call) or price per second (per second), used when a model has no price configured.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             <FormField
               control={form.control}

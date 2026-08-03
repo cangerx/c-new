@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -271,4 +272,78 @@ func TestModelPriceHelperRequestBillingRatiosOnlyApplyToFixedPrice(t *testing.T)
 	require.Equal(t, "QuotaFromFloat", clamp.Op)
 	require.Equal(t, common.QuotaClampOverflow, clamp.Kind)
 	require.Nil(t, info.Billing)
+}
+
+func TestModelPriceHelperPerCallDefaultTaskBilling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	savedModelPrices := ratio_setting.ModelPrice2JSONString()
+	savedModelRatios := ratio_setting.ModelRatio2JSONString()
+	savedMode := operation_setting.GetQuotaSetting().DefaultTaskBillingMode
+	savedPrice := operation_setting.GetQuotaSetting().DefaultTaskPrice
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedModelPrices))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedModelRatios))
+		operation_setting.GetQuotaSetting().DefaultTaskBillingMode = savedMode
+		operation_setting.GetQuotaSetting().DefaultTaskPrice = savedPrice
+	})
+
+	// 清除所有模型价格/倍率配置，只留系统默认
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString("{}"))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString("{}"))
+
+	newInfo := func(model string) (*gin.Context, *relaycommon.RelayInfo) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Set("group", "default")
+		return ctx, &relaycommon.RelayInfo{
+			OriginModelName: model,
+			UserGroup:       "default",
+			UsingGroup:      "default",
+		}
+	}
+
+	t.Run("per_call default applies fixed price once", func(t *testing.T) {
+		operation_setting.GetQuotaSetting().DefaultTaskBillingMode = "per_call"
+		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.1
+
+		ctx, info := newInfo("unconfigured-model")
+		priceData, err := ModelPriceHelperPerCall(ctx, info)
+
+		require.NoError(t, err)
+		require.True(t, priceData.UsePrice)
+		// 0.1 * 500000 = 50000，固定价不随 seconds 放大
+		require.Equal(t, 50000, priceData.Quota)
+
+		// 模拟 adaptor.EstimateBilling 注入 seconds 倍率
+		priceData.AddOtherRatio("seconds", 5)
+		require.Equal(t, 50000, priceData.Quota)
+	})
+
+	t.Run("per_second default applies ratio times seconds", func(t *testing.T) {
+		operation_setting.GetQuotaSetting().DefaultTaskBillingMode = "per_second"
+		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.04
+
+		ctx, info := newInfo("unconfigured-model")
+		priceData, err := ModelPriceHelperPerCall(ctx, info)
+
+		require.NoError(t, err)
+		require.False(t, priceData.UsePrice)
+		// 基础预扣：0.04 / 2 * 500000 = 10000
+		require.Equal(t, 10000, priceData.Quota)
+
+		// 模拟 relay_task step 6：按量才把 OtherRatios 乘入
+		priceData.AddOtherRatio("seconds", 5)
+		quotaWithRatios := priceData.ApplyOtherRatiosToFloat(float64(priceData.Quota))
+		require.Equal(t, 50000.0, quotaWithRatios)
+	})
+
+	t.Run("default price zero keeps error for unconfigured model", func(t *testing.T) {
+		operation_setting.GetQuotaSetting().DefaultTaskBillingMode = "per_call"
+		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0
+
+		ctx, info := newInfo("unconfigured-model")
+		_, err := ModelPriceHelperPerCall(ctx, info)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "has not been priced")
+	})
 }
