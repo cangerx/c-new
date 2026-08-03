@@ -14,5 +14,9 @@ import (
 	_ "github.com/QuantumNous/new-api/plugins/_example"
 
 	// Custom landing page, replaces the default index at "/".
-	_ "github.com/QuantumNous/new-api/plugins/homepage"
+	// Disabled: the landing page now lives in the React app at
+	// web/src/features/landing, wired to "/" via web/src/routes/index.tsx.
+	// Re-enabling this would shadow that route, because an explicit Gin
+	// GET("/") outranks the NoRoute handler that serves the SPA.
+	// _ "github.com/QuantumNous/new-api/plugins/homepage"
 )
