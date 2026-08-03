@@ -1,0 +1,91 @@
+# Build & push a self-hosted image for the `custom` branch.
+#
+# One-time setup:
+#   Settings > Secrets and variables > Actions
+#     Secret   DOCKERHUB_USERNAME  your Docker Hub account
+#     Secret   DOCKERHUB_TOKEN     Docker Hub access token (Read & Write)
+#     Variable IMAGE_NAME          e.g. yourname/new-api
+#
+# Usage: Actions > Publish custom image > Run workflow > pick branch.
+# Produces a single immutable tag, e.g. custom-20260803-a1b2c3d (linux/amd64).
+
+name: Publish custom image
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to build"
+        required: true
+        default: "custom"
+        type: string
+
+jobs:
+  build:
+    name: Build & push (amd64)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check IMAGE_NAME is configured
+        run: |
+          if [ -z "${{ vars.IMAGE_NAME }}" ]; then
+            echo "::error::Repository variable IMAGE_NAME is not set (expected e.g. yourname/new-api)"
+            exit 1
+          fi
+
+      - name: Check out
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          ref: ${{ inputs.branch }}
+
+      - name: Resolve version & write VERSION
+        id: version
+        env:
+          BRANCH_NAME: ${{ inputs.branch }}
+        run: |
+          SLUG=$(printf '%s' "$BRANCH_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+          if [ -z "$SLUG" ]; then
+            echo "::error::Branch '$BRANCH_NAME' cannot be converted to a valid Docker tag"
+            exit 1
+          fi
+          VERSION="${SLUG}-$(date +'%Y%m%d')-$(git rev-parse --short HEAD)"
+          echo "$VERSION" > VERSION
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building $VERSION"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build & push
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ vars.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### Image pushed"
+            echo '```'
+            echo "${{ vars.IMAGE_NAME }}:${{ steps.version.outputs.version }}"
+            echo "${{ steps.build.outputs.digest }}"
+            echo '```'
+            echo "Deploy: set this tag as \`image:\` in docker-compose.yml, then"
+            echo '```'
+            echo "docker compose pull new-api && docker compose up -d new-api"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
