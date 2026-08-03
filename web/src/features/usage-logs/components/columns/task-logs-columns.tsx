@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
-import { Music } from 'lucide-react'
+import { Eye, Music } from 'lucide-react'
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -36,6 +36,7 @@ import {
   type AudioClip,
 } from '../dialogs/audio-preview-dialog'
 import { FailReasonDialog } from '../dialogs/fail-reason-dialog'
+import { TaskLogDetailsDialog } from '../dialogs/task-log-details-dialog'
 import { useUsageLogsContext } from '../usage-logs-provider'
 import {
   createDurationColumn,
@@ -221,6 +222,7 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
         const failReason = row.getValue('fail_reason') as string
         const status = log.status
         const [dialogOpen, setDialogOpen] = useState(false)
+        const [detailsOpen, setDetailsOpen] = useState(false)
 
         const isSunoSuccess =
           log.platform === 'suno' && status === TASK_STATUS.SUCCESS
@@ -234,7 +236,25 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
                 (c as Record<string, unknown>).audio_url
             )
           ) {
-            return <AudioPreviewCell log={log} />
+            return (
+              <div className='flex items-center gap-2'>
+                <AudioPreviewCell log={log} />
+                <button
+                  type='button'
+                  className='flex items-center gap-1 text-xs text-blue-600 hover:underline dark:text-blue-400'
+                  onClick={() => setDetailsOpen(true)}
+                  title={t('Click to view full details')}
+                >
+                  <Eye className='size-3' />
+                  {t('View details')}
+                </button>
+                <TaskLogDetailsDialog
+                  log={log}
+                  open={detailsOpen}
+                  onOpenChange={setDetailsOpen}
+                />
+              </div>
+            )
           }
         }
 
@@ -247,42 +267,60 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
         const isSuccess = status === TASK_STATUS.SUCCESS
         const isUrl = failReason?.startsWith('http')
 
-        if (isSuccess && isVideoTask && isUrl) {
-          const videoUrl = `/v1/videos/${log.task_id}/content`
-          return (
-            <a
-              href={videoUrl}
-              target='_blank'
-              rel='noopener noreferrer'
-              className='text-foreground text-xs hover:underline'
-            >
-              {t('Click to preview video')}
-            </a>
-          )
-        }
-
-        if (!failReason) {
+        const previewBlock = (() => {
+          if (isSuccess && isVideoTask && isUrl) {
+            const videoUrl = `/v1/videos/${log.task_id}/content`
+            return (
+              <a
+                href={videoUrl}
+                target='_blank'
+                rel='noopener noreferrer'
+                className='text-foreground text-xs hover:underline'
+              >
+                {t('Click to preview video')}
+              </a>
+            )
+          }
+          if (failReason) {
+            return (
+              <button
+                type='button'
+                className='group flex max-w-[200px] items-center gap-1 text-left text-xs'
+                onClick={() => setDialogOpen(true)}
+                title={t('Click to view full error message')}
+              >
+                <span className='truncate leading-snug text-red-600 group-hover:underline dark:text-red-400'>
+                  {failReason}
+                </span>
+              </button>
+            )
+          }
           return <span className='text-muted-foreground/60 text-xs'>-</span>
-        }
+        })()
 
         return (
-          <>
+          <div className='flex items-center gap-2'>
+            {previewBlock}
             <button
               type='button'
-              className='group flex max-w-[200px] items-center gap-1 text-left text-xs'
-              onClick={() => setDialogOpen(true)}
-              title={t('Click to view full error message')}
+              className='flex items-center gap-1 text-xs text-blue-600 hover:underline dark:text-blue-400'
+              onClick={() => setDetailsOpen(true)}
+              title={t('Click to view full details')}
             >
-              <span className='truncate leading-snug text-red-600 group-hover:underline dark:text-red-400'>
-                {failReason}
-              </span>
+              <Eye className='size-3' />
+              {t('View details')}
             </button>
             <FailReasonDialog
-              failReason={failReason}
+              failReason={failReason || ''}
               open={dialogOpen}
               onOpenChange={setDialogOpen}
             />
-          </>
+            <TaskLogDetailsDialog
+              log={log}
+              open={detailsOpen}
+              onOpenChange={setDetailsOpen}
+            />
+          </div>
         )
       },
       size: 200,
