@@ -32,6 +32,7 @@ export type ModelPricingSnapshotInput = {
   audioCompletionRatio: string
   billingMode: string
   billingExpr: string
+  taskBillingMode: string
 }
 
 export type ModelPricingSnapshot = {
@@ -46,6 +47,7 @@ export type ModelPricingSnapshot = {
   audioCompletionRatio?: string
   billingMode?: string
   billingExpr?: string
+  taskBillingMode?: string
   requestRuleExpr?: string
   hasConflict: boolean
 }
@@ -174,6 +176,7 @@ export const buildModelSnapshots = ({
   audioCompletionRatio,
   billingMode,
   billingExpr,
+  taskBillingMode,
 }: ModelPricingSnapshotInput): ModelPricingSnapshot[] => {
   const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
     fallback: {},
@@ -215,6 +218,13 @@ export const buildModelSnapshots = ({
     fallback: {},
     context: 'billing expression',
   })
+  const taskBillingModeMap = safeJsonParse<Record<string, string>>(
+    taskBillingMode,
+    {
+      fallback: {},
+      context: 'task billing mode',
+    }
+  )
 
   const modelNames = new Set([
     ...Object.keys(priceMap),
@@ -227,9 +237,10 @@ export const buildModelSnapshots = ({
     ...Object.keys(audioCompletionMap),
     ...Object.keys(billingModeMap),
     ...Object.keys(billingExprMap),
+    ...Object.keys(taskBillingModeMap),
   ])
 
-  return Array.from(modelNames).map((name) => {
+  return [...modelNames].map((name) => {
     const price = priceMap[name]?.toString() || ''
     const ratio = ratioMap[name]?.toString() || ''
     const cache = cacheMap[name]?.toString() || ''
@@ -257,6 +268,7 @@ export const buildModelSnapshots = ({
         imageRatio: image,
         audioRatio: audio,
         audioCompletionRatio: audioCompletion,
+        taskBillingMode: taskBillingModeMap[name] || '',
         hasConflict: false,
       }
     }
@@ -271,6 +283,7 @@ export const buildModelSnapshots = ({
       imageRatio: image,
       audioRatio: audio,
       audioCompletionRatio: audioCompletion,
+      taskBillingMode: taskBillingModeMap[name] || '',
       billingMode: price !== '' ? 'per-request' : 'per-token',
       hasConflict:
         price !== '' &&
@@ -298,6 +311,7 @@ export const getSnapshotSignature = (snapshot?: ModelPricingSnapshot) => {
     audioCompletionRatio: snapshot.audioCompletionRatio || '',
     billingMode: snapshot.billingMode || 'per-token',
     billingExpr: snapshot.billingExpr || '',
+    taskBillingMode: snapshot.taskBillingMode || '',
     requestRuleExpr: snapshot.requestRuleExpr || '',
   })
 }

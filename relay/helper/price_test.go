@@ -347,3 +347,117 @@ func TestModelPriceHelperPerCallDefaultTaskBilling(t *testing.T) {
 		require.Contains(t, err.Error(), "has not been priced")
 	})
 }
+
+func TestModelPriceHelperPerCallExplicitMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	savedModelPrices := ratio_setting.ModelPrice2JSONString()
+	savedModelRatios := ratio_setting.ModelRatio2JSONString()
+	savedMode := operation_setting.GetQuotaSetting().DefaultTaskBillingMode
+	savedPrice := operation_setting.GetQuotaSetting().DefaultTaskPrice
+	savedTaskMode := billing_setting.GetTaskBillingModeCopy()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedModelPrices))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedModelRatios))
+		operation_setting.GetQuotaSetting().DefaultTaskBillingMode = savedMode
+		operation_setting.GetQuotaSetting().DefaultTaskPrice = savedPrice
+		bs := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
+		bs.TaskBillingMode = savedTaskMode
+	})
+
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString("{}"))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString("{}"))
+
+	bs := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
+	bs.TaskBillingMode = map[string]string{
+		"model-per-call":   billing_setting.TaskBillingModePerCall,
+		"model-per-second": billing_setting.TaskBillingModePerSecond,
+	}
+
+	newInfo := func(model string) (*gin.Context, *relaycommon.RelayInfo) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Set("group", "default")
+		return ctx, &relaycommon.RelayInfo{
+			OriginModelName: model,
+			UserGroup:       "default",
+			UsingGroup:      "default",
+		}
+	}
+
+	t.Run("per_call with model price uses model price", func(t *testing.T) {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"model-per-call": 0.2}`))
+		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.1
+
+		ctx, info := newInfo("model-per-call")
+		priceData, err := ModelPriceHelperPerCall(ctx, info)
+
+		require.NoError(t, err)
+		require.True(t, priceData.UsePrice)
+		require.Equal(t, 100000, priceData.Quota) // 0.2 * 500000
+	})
+
+	t.Run("per_call without model price falls back to system default", func(t *testing.T) {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.1
+
+		ctx, info := newInfo("model-per-call")
+		priceData, err := ModelPriceHelperPerCall(ctx, info)
+
+		require.NoError(t, err)
+		require.True(t, priceData.UsePrice)
+		require.Equal(t, 50000, priceData.Quota) // 0.1 * 500000
+	})
+
+	t.Run("per_call falls back to built-in default model price", func(t *testing.T) {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.5
+		bs.TaskBillingMode = map[string]string{
+			"sora-2": billing_setting.TaskBillingModePerCall,
+		}
+
+		ctx, info := newInfo("sora-2")
+		priceData, err := ModelPriceHelperPerCall(ctx, info)
+
+		require.NoError(t, err)
+		require.True(t, priceData.UsePrice)
+		require.Equal(t, 150000, priceData.Quota) // 内置默认价 0.3 * 500000，优先于系统默认 0.5
+	})
+
+	t.Run("per_second with model ratio uses model ratio", func(t *testing.T) {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"model-per-second": 0.04}`))
+		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.08
+
+		ctx, info := newInfo("model-per-second")
+		priceData, err := ModelPriceHelperPerCall(ctx, info)
+
+		require.NoError(t, err)
+		require.False(t, priceData.UsePrice)
+		require.Equal(t, 10000, priceData.Quota) // 0.04 / 2 * 500000 预扣一半
+	})
+
+	t.Run("per_second without model ratio uses system default not 37.5", func(t *testing.T) {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.08
+
+		ctx, info := newInfo("model-per-second")
+		priceData, err := ModelPriceHelperPerCall(ctx, info)
+
+		require.NoError(t, err)
+		require.False(t, priceData.UsePrice)
+		// 回落系统默认价 0.08，而不是 GetModelRatio 的 37.5 兜底
+		require.Equal(t, 20000, priceData.Quota) // 0.08 / 2 * 500000
+	})
+
+	t.Run("unconfigured mode keeps legacy fallback", func(t *testing.T) {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+		operation_setting.GetQuotaSetting().DefaultTaskBillingMode = "per_second"
+		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.04
+
+		ctx, info := newInfo("no-mode-model")
+		priceData, err := ModelPriceHelperPerCall(ctx, info)
+
+		require.NoError(t, err)
+		require.False(t, priceData.UsePrice)
+		require.Equal(t, 10000, priceData.Quota) // 系统默认 per_second 0.04 / 2 * 500000
+	})
+}

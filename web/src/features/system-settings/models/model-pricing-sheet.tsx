@@ -451,6 +451,7 @@ export const ModelPricingEditorPanel = forwardRef<
         imageRatio: values.imageRatio || '',
         audioRatio: values.audioRatio || '',
         audioCompletionRatio: values.audioCompletionRatio || '',
+        taskBillingMode: editData?.taskBillingMode || '',
       }
 
       if (pricingMode === 'tiered_expr') {
@@ -460,7 +461,7 @@ export const ModelPricingEditorPanel = forwardRef<
 
       return data
     },
-    [billingExpr, pricingMode, requestRuleExpr]
+    [billingExpr, editData, pricingMode, requestRuleExpr]
   )
 
   useImperativeHandle(

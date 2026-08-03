@@ -409,6 +409,18 @@ func GetModelRatio(name string) (float64, bool, string) {
 	return ratio, true, name
 }
 
+// GetModelTaskRatio 精确查询模型倍率（含通配模型回退），不进行自用模式 37.5 兜底。
+// 用于任务/视频模型按秒计费，避免未配置时误用 token 倍率兜底值。
+func GetModelTaskRatio(name string) (float64, bool) {
+	name = FormatMatchingModelName(name)
+
+	ratio, ok := modelRatioMap.Get(name)
+	if !ok && strings.HasSuffix(name, CompactModelSuffix) {
+		ratio, ok = modelRatioMap.Get(CompactWildcardModelKey)
+	}
+	return ratio, ok
+}
+
 func DefaultModelRatio2JSONString() string {
 	jsonBytes, err := common.Marshal(defaultModelRatio)
 	if err != nil {

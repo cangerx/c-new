@@ -77,6 +77,7 @@ type ModelRatioVisualEditorProps = {
   savedAudioCompletionRatio: string
   savedBillingMode: string
   savedBillingExpr: string
+  savedTaskBillingMode: string
   modelPrice: string
   modelRatio: string
   cacheRatio: string
@@ -87,6 +88,7 @@ type ModelRatioVisualEditorProps = {
   audioCompletionRatio: string
   billingMode: string
   billingExpr: string
+  taskBillingMode: string
   candidateModelNames?: string[]
   candidateModelsLoading?: boolean
   filterMode?: 'all' | 'unset'
@@ -116,6 +118,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     savedAudioCompletionRatio,
     savedBillingMode,
     savedBillingExpr,
+    savedTaskBillingMode,
     modelPrice,
     modelRatio,
     cacheRatio,
@@ -126,6 +129,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     audioCompletionRatio,
     billingMode,
     billingExpr,
+    taskBillingMode,
     candidateModelNames,
     candidateModelsLoading,
     filterMode = 'all',
@@ -200,6 +204,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       audioCompletionRatio: savedAudioCompletionRatio,
       billingMode: savedBillingMode,
       billingExpr: savedBillingExpr,
+      taskBillingMode: savedTaskBillingMode,
     })
     const draftRows = buildModelSnapshots({
       modelPrice,
@@ -212,6 +217,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       audioCompletionRatio,
       billingMode,
       billingExpr,
+      taskBillingMode,
     })
 
     const savedByName = new Map(savedRows.map((row) => [row.name, row]))
@@ -255,6 +261,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     savedAudioCompletionRatio,
     savedBillingMode,
     savedBillingExpr,
+    savedTaskBillingMode,
     modelPrice,
     modelRatio,
     cacheRatio,
@@ -265,6 +272,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
     audioCompletionRatio,
     billingMode,
     billingExpr,
+    taskBillingMode,
   ])
 
   const modeCounts = useMemo(
@@ -310,6 +318,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
         billingMode: editBillingMode,
         billingExpr: editableModel.billingExpr,
         requestRuleExpr: editableModel.requestRuleExpr,
+        taskBillingMode: editableModel.taskBillingMode || '',
       })
       setEditorOpen(true)
       if (isMobile) setSheetOpen(true)
@@ -380,6 +389,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
         billingExpr,
         { fallback: {}, silent: true }
       )
+      const taskBillingModeMap = safeJsonParse<Record<string, string>>(
+        taskBillingMode,
+        { fallback: {}, silent: true }
+      )
 
       delete priceMap[name]
       delete ratioMap[name]
@@ -391,6 +404,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       delete audioCompletionMap[name]
       delete billingModeMap[name]
       delete billingExprMap[name]
+      delete taskBillingModeMap[name]
 
       onChange('ModelPrice', JSON.stringify(priceMap, null, 2))
       onChange('ModelRatio', JSON.stringify(ratioMap, null, 2))
@@ -411,6 +425,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
         'billing_setting.billing_expr',
         JSON.stringify(billingExprMap, null, 2)
       )
+      onChange(
+        'billing_setting.task_billing_mode',
+        JSON.stringify(taskBillingModeMap, null, 2)
+      )
 
       if (editData?.name === name) {
         setEditData(null)
@@ -429,9 +447,60 @@ const ModelRatioVisualEditorComponent = forwardRef<
       audioCompletionRatio,
       billingMode,
       billingExpr,
+      taskBillingMode,
       onChange,
       editData,
     ]
+  )
+
+  // 行内修改任务/视频模型的显式计费模式（per_call / per_second）或价格。
+  // 模式写入 billing_setting.task_billing_mode；
+  // 按次价格写入 ModelPrice，按秒价格写入 ModelRatio。
+  const handleTaskBillingChange = useCallback(
+    (name: string, mode: string, price: string) => {
+      const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
+        fallback: {},
+        silent: true,
+      })
+      const ratioMap = safeJsonParse<Record<string, number>>(modelRatio, {
+        fallback: {},
+        silent: true,
+      })
+      const taskBillingModeMap = safeJsonParse<Record<string, string>>(
+        taskBillingMode,
+        { fallback: {}, silent: true }
+      )
+
+      if (mode === 'per_call' || mode === 'per_second') {
+        taskBillingModeMap[name] = mode
+      } else {
+        delete taskBillingModeMap[name]
+      }
+
+      if (mode === 'per_call') {
+        if (price && price !== '') {
+          const parsed = Number.parseFloat(price)
+          if (Number.isFinite(parsed)) priceMap[name] = parsed
+        } else {
+          delete priceMap[name]
+        }
+      } else if (mode === 'per_second') {
+        if (price && price !== '') {
+          const parsed = Number.parseFloat(price)
+          if (Number.isFinite(parsed)) ratioMap[name] = parsed
+        } else {
+          delete ratioMap[name]
+        }
+      }
+
+      onChange('ModelPrice', JSON.stringify(priceMap, null, 2))
+      onChange('ModelRatio', JSON.stringify(ratioMap, null, 2))
+      onChange(
+        'billing_setting.task_billing_mode',
+        JSON.stringify(taskBillingModeMap, null, 2)
+      )
+    },
+    [modelPrice, modelRatio, taskBillingMode, onChange]
   )
 
   const columns = useMemo(
@@ -439,10 +508,11 @@ const ModelRatioVisualEditorComponent = forwardRef<
       buildModelRatioColumns({
         onDelete: handleDelete,
         onEdit: handleEdit,
+        onTaskBillingChange: handleTaskBillingChange,
         deleteDisabled: filterMode === 'unset',
         t,
       }),
-    [handleEdit, handleDelete, filterMode, t]
+    [handleEdit, handleDelete, handleTaskBillingChange, filterMode, t]
   )
 
   const ensurePageInRange = useCallback((pageCount: number) => {
@@ -520,6 +590,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
         billingExpr,
         { fallback: {}, silent: true }
       )
+      const taskBillingModeMap = safeJsonParse<Record<string, string>>(
+        taskBillingMode,
+        { fallback: {}, silent: true }
+      )
 
       const setIfPresent = (
         target: Record<string, number>,
@@ -542,6 +616,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
         delete audioCompletionMap[name]
         delete billingModeMap[name]
         delete billingExprMap[name]
+        delete taskBillingModeMap[name]
 
         if (data.billingMode === 'tiered_expr') {
           const combined = combineBillingExpr(
@@ -575,6 +650,12 @@ const ModelRatioVisualEditorComponent = forwardRef<
           setIfPresent(audioMap, name, data.audioRatio)
           setIfPresent(audioCompletionMap, name, data.audioCompletionRatio)
         }
+
+        // 模型级显式任务计费模式（per_call / per_second），
+        // 未设置时后端回退到系统默认任务计费设置。
+        if (data.taskBillingMode === 'per_call' || data.taskBillingMode === 'per_second') {
+          taskBillingModeMap[name] = data.taskBillingMode
+        }
       })
 
       onChange('ModelPrice', JSON.stringify(priceMap, null, 2))
@@ -596,6 +677,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
         'billing_setting.billing_expr',
         JSON.stringify(billingExprMap, null, 2)
       )
+      onChange(
+        'billing_setting.task_billing_mode',
+        JSON.stringify(taskBillingModeMap, null, 2)
+      )
     },
     [
       modelPrice,
@@ -608,6 +693,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       audioCompletionRatio,
       billingMode,
       billingExpr,
+      taskBillingMode,
       onChange,
     ]
   )
@@ -724,7 +810,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
               table={table}
               containerClassName='min-h-0 flex-1 rounded-md'
               tableContainerClassName='h-full'
-              tableClassName='min-w-[852px] table-fixed'
+              tableClassName='min-w-[1100px] table-fixed'
               tableHeaderClassName='[&_tr]:border-b-0'
               splitHeaderScrollClassName='h-full'
               bodyContainerClassName='[scrollbar-gutter:stable]'
@@ -738,9 +824,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
               colgroup={
                 <colgroup>
                   <col className='w-9' />
-                  <col className='w-[300px]' />
-                  <col className='w-[120px]' />
-                  <col className='w-[300px]' />
+                  <col className='w-[280px]' />
+                  <col className='w-[110px]' />
+                  <col className='w-[260px]' />
+                  <col className='w-[240px]' />
                   <col className='w-auto' />
                 </colgroup>
               }
