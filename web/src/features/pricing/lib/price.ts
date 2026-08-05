@@ -20,7 +20,11 @@ import { formatCurrencyFromUSD } from '@/lib/currency'
 
 import { QUOTA_TYPE_VALUES, TOKEN_UNIT_DIVISORS } from '../constants'
 import type { PricingModel, TokenUnit, PriceType } from '../types'
-import { getConfiguredGroupRatio, getDisplayGroupRatio } from './model-helpers'
+import {
+  getConfiguredGroupRatio,
+  getDisplayGroupRatio,
+  isPerSecondModel,
+} from './model-helpers'
 
 // ----------------------------------------------------------------------------
 // Price Calculation Utilities
@@ -208,6 +212,39 @@ export function formatGroupPrice(
 }
 
 /**
+ * Format per-second price for a specific group (task/video models).
+ * 与 formatFixedPrice 同构，只是价格源是 model_ratio（美元/秒）。
+ */
+export function formatPerSecondGroupPrice(
+  model: PricingModel,
+  group: string,
+  showWithRecharge = false,
+  priceRate = 1,
+  usdExchangeRate = 1,
+  groupRatio: Record<string, number>
+): string {
+  if (!isPerSecondModel(model)) {
+    return '-'
+  }
+
+  const ratio = getConfiguredGroupRatio(groupRatio, group)
+  let priceInUSD = (model.model_ratio || 0) * ratio
+
+  priceInUSD = applyRechargeRate(
+    priceInUSD,
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
+
+  return formatCurrencyFromUSD(priceInUSD, {
+    digitsLarge: 4,
+    digitsSmall: 6,
+    abbreviate: false,
+  })
+}
+
+/**
  * Format fixed price for pay-per-request models (with specific group)
  */
 export function formatFixedPrice(
@@ -267,6 +304,40 @@ export function formatRequestPrice(
   return formatCurrencyFromUSD(priceInUSD, {
     digitsLarge: 4,
     digitsSmall: 4,
+    abbreviate: false,
+  })
+}
+
+/**
+ * Format per-second price for task/video models billed by output duration.
+ * 后端把每秒美元价格放在 model_ratio 里（见 model/pricing.go），单位不是
+ * token 倍率，所以不能走 calculateTokenPrice 的 per-1M-token 换算。
+ */
+export function formatPerSecondPrice(
+  model: PricingModel,
+  showWithRecharge = false,
+  priceRate = 1,
+  usdExchangeRate = 1,
+  selectedGroup?: string
+): string {
+  if (!isPerSecondModel(model)) {
+    return '-'
+  }
+
+  const displayGroupRatio = getDisplayGroupRatio(model, selectedGroup)
+
+  let priceInUSD = (model.model_ratio || 0) * displayGroupRatio
+
+  priceInUSD = applyRechargeRate(
+    priceInUSD,
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
+
+  return formatCurrencyFromUSD(priceInUSD, {
+    digitsLarge: 4,
+    digitsSmall: 6,
     abbreviate: false,
   })
 }

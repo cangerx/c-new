@@ -24,6 +24,7 @@ import {
   ENDPOINT_TYPES,
 } from '../constants'
 import type { PricingModel } from '../types'
+import { isPerSecondModel } from './model-helpers'
 
 // ----------------------------------------------------------------------------
 // Filter Utilities
@@ -78,11 +79,17 @@ export function filterByQuotaType(
   quotaType: string
 ): PricingModel[] {
   if (quotaType === QUOTA_TYPES.ALL) return models
-  const targetType =
-    quotaType === QUOTA_TYPES.TOKEN
-      ? QUOTA_TYPE_VALUES.TOKEN
-      : QUOTA_TYPE_VALUES.REQUEST
-  return models.filter((m) => m.quota_type === targetType)
+  // 按秒计费的 quota_type 也是 0，只能靠 billing_mode 区分；
+  // 「按 Token」筛选须排除它，否则按秒模型会混进 token 列表。
+  if (quotaType === QUOTA_TYPES.PER_SECOND) {
+    return models.filter((m) => isPerSecondModel(m))
+  }
+  if (quotaType === QUOTA_TYPES.TOKEN) {
+    return models.filter(
+      (m) => m.quota_type === QUOTA_TYPE_VALUES.TOKEN && !isPerSecondModel(m)
+    )
+  }
+  return models.filter((m) => m.quota_type === QUOTA_TYPE_VALUES.REQUEST)
 }
 
 /**

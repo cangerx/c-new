@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 )
@@ -175,6 +176,53 @@ func appendPricingEndpoint(endpoints []string, endpoint string) []string {
 		return endpoints
 	}
 	return append(endpoints, endpoint)
+}
+
+// applyTaskBillingPricing 按任务/视频模型的显式计费模式（per_call / per_second）
+// 填充定价字段，返回是否已定价。未配置该模式时返回 false，由调用方走
+// ModelPrice/ModelRatio 反推。
+//
+// 按秒计费的每秒价格存在 ModelRatio 里，单位是美元/秒而非 token 倍率。若不先
+// 判模式，模型广场会把它当 token 倍率显示成「按 Token」并换算出无意义的每 1M
+// token 价格。前端凭 BillingMode 区分（见 isPerSecondModel）。
+//
+// 回退链必须与 relay/helper/price.go 的 ModelPriceHelperPerCall 保持一致，
+// 否则广场标价与实际扣费不符。
+func applyTaskBillingPricing(model string, pricing *Pricing) bool {
+	switch billing_setting.GetTaskBillingMode(model) {
+	case billing_setting.TaskBillingModePerCall:
+		price, ok := ratio_setting.GetModelPrice(model, false)
+		if !ok {
+			price, ok = ratio_setting.GetDefaultModelPriceMap()[model]
+		}
+		if !ok {
+			if qs := operation_setting.GetQuotaSetting(); qs.DefaultTaskPrice > 0 {
+				price, ok = qs.DefaultTaskPrice, true
+			}
+		}
+		if !ok {
+			return false
+		}
+		pricing.ModelPrice = price
+		pricing.QuotaType = 1
+		pricing.BillingMode = billing_setting.TaskBillingModePerCall
+		return true
+	case billing_setting.TaskBillingModePerSecond:
+		secondPrice, ok := ratio_setting.GetModelTaskRatio(model)
+		if !ok {
+			if qs := operation_setting.GetQuotaSetting(); qs.DefaultTaskPrice > 0 {
+				secondPrice, ok = qs.DefaultTaskPrice, true
+			}
+		}
+		if !ok {
+			return false
+		}
+		pricing.ModelRatio = secondPrice
+		pricing.QuotaType = 0
+		pricing.BillingMode = billing_setting.TaskBillingModePerSecond
+		return true
+	}
+	return false
 }
 
 func updatePricing() {
@@ -373,15 +421,20 @@ func updatePricing() {
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
 		}
-		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
-		if findPrice {
-			pricing.ModelPrice = modelPrice
-			pricing.QuotaType = 1
-		} else {
-			modelRatio, _, _ := ratio_setting.GetModelRatio(model)
-			pricing.ModelRatio = modelRatio
-			pricing.CompletionRatio = ratio_setting.GetCompletionRatio(model)
-			pricing.QuotaType = 0
+		// 任务/视频模型的显式计费模式优先于 ModelPrice/ModelRatio 反推
+		taskBillingResolved := applyTaskBillingPricing(model, &pricing)
+
+		if !taskBillingResolved {
+			modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
+			if findPrice {
+				pricing.ModelPrice = modelPrice
+				pricing.QuotaType = 1
+			} else {
+				modelRatio, _, _ := ratio_setting.GetModelRatio(model)
+				pricing.ModelRatio = modelRatio
+				pricing.CompletionRatio = ratio_setting.GetCompletionRatio(model)
+				pricing.QuotaType = 0
+			}
 		}
 		if cacheRatio, ok := ratio_setting.GetCacheRatio(model); ok {
 			pricing.CacheRatio = &cacheRatio
@@ -400,10 +453,15 @@ func updatePricing() {
 			audioCompletionRatio := ratio_setting.GetAudioCompletionRatio(model)
 			pricing.AudioCompletionRatio = &audioCompletionRatio
 		}
-		if billingMode := billing_setting.GetBillingMode(model); billingMode == "tiered_expr" {
-			if expr, ok := billing_setting.GetBillingExpr(model); ok && strings.TrimSpace(expr) != "" {
-				pricing.BillingMode = billingMode
-				pricing.BillingExpr = expr
+		// 已按任务计费模式定价的模型不再被 tiered_expr 覆盖：任务模型走
+		// ModelPriceHelperPerCall，那里只看 task_billing_mode，不看 tiered_expr。
+		// 覆盖会让广场标价与实际扣费不符。
+		if !taskBillingResolved {
+			if billingMode := billing_setting.GetBillingMode(model); billingMode == "tiered_expr" {
+				if expr, ok := billing_setting.GetBillingExpr(model); ok && strings.TrimSpace(expr) != "" {
+					pricing.BillingMode = billingMode
+					pricing.BillingExpr = expr
+				}
 			}
 		}
 		pricingMap = append(pricingMap, pricing)

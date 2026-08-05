@@ -102,8 +102,19 @@ export function replaceModelInPath(path: string, modelName: string): string {
 }
 
 /**
+ * Check if model is billed per second of output (task/video models).
+ * 按秒计费的每秒价格存在 model_ratio 里，单位是美元/秒而非 token 倍率，
+ * 所以必须先于 isTokenBasedModel 判断，否则会被当成按 Token 换算。
+ */
+export function isPerSecondModel(model: PricingModel): boolean {
+  return model.billing_mode === 'per_second'
+}
+
+/**
  * Check if model is token-based pricing
  */
 export function isTokenBasedModel(model: PricingModel): boolean {
-  return model.quota_type === QUOTA_TYPE_VALUES.TOKEN
+  return (
+    model.quota_type === QUOTA_TYPE_VALUES.TOKEN && !isPerSecondModel(model)
+  )
 }
