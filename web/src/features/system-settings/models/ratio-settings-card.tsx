@@ -269,6 +269,7 @@ export function RatioSettingsCard({
       ExposeRatioEnabled: modelDefaults.ExposeRatioEnabled,
       BillingMode: normalizeJsonString(modelDefaults.BillingMode),
       BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
+      TaskBillingMode: normalizeJsonString(modelDefaults.TaskBillingMode),
     }
     setSavedModelValues(modelNormalizedDefaults.current)
 

@@ -22,14 +22,6 @@ import { DataTableColumnHeader } from '@/components/data-table/core/column-heade
 import { StaticRowActions } from '@/components/data-table/static/static-row-actions'
 import { StatusBadge } from '@/components/status-badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 
 import {
   getModeLabel,
@@ -50,7 +42,6 @@ const filterBySelectedValues = (
 type BuildModelRatioColumnsOptions = {
   onDelete: (name: string) => void
   onEdit: (model: ModelRow) => void
-  onTaskBillingChange?: (name: string, mode: string, price: string) => void
   deleteDisabled?: boolean
   t: (key: string) => string
 }
@@ -58,7 +49,6 @@ type BuildModelRatioColumnsOptions = {
 export function buildModelRatioColumns({
   onDelete,
   onEdit,
-  onTaskBillingChange,
   deleteDisabled,
   t,
 }: BuildModelRatioColumnsOptions): ColumnDef<ModelRow>[] {
@@ -121,8 +111,16 @@ export function buildModelRatioColumns({
       ),
       cell: ({ row }) => (
         <StatusBadge
-          label={t(getModeLabel(row.original.billingMode))}
-          variant={getModeVariant(row.original.billingMode)}
+          label={t(
+            getModeLabel(
+              row.original.billingMode,
+              row.original.taskBillingMode
+            )
+          )}
+          variant={getModeVariant(
+            row.original.billingMode,
+            row.original.taskBillingMode
+          )}
           copyable={false}
           showDot={false}
           className='-ml-1.5 px-0'
@@ -152,71 +150,6 @@ export function buildModelRatioColumns({
           getPriceSummary(rowB.original, t)
         ),
       meta: { label: t('Price summary') },
-    },
-    {
-      id: 'taskBilling',
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Task billing')} />
-      ),
-      cell: ({ row }) => {
-        const model = row.original
-        const mode = model.taskBillingMode || ''
-        let price = ''
-        if (mode === 'per_call') {
-          price = model.price || ''
-        } else if (mode === 'per_second') {
-          price = model.ratio || ''
-        }
-        const stopPropagation = (
-          e: React.SyntheticEvent<HTMLDivElement>
-        ) => {
-          e.stopPropagation()
-        }
-        return (
-          <div
-            className='flex min-w-0 items-center gap-2'
-            onClick={stopPropagation}
-            onPointerDown={stopPropagation}
-          >
-            <Select
-              value={mode || 'not-set'}
-              onValueChange={(value) => {
-                const nextMode = value === 'not-set' ? '' : value
-                onTaskBillingChange?.(model.name, nextMode, '')
-              }}
-            >
-              <SelectTrigger className='h-8 w-28' aria-label={t('Task billing mode')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='not-set'>{t('Not set')}</SelectItem>
-                <SelectItem value='per_call'>{t('Per call')}</SelectItem>
-                <SelectItem value='per_second'>{t('Per second')}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Input
-              value={price}
-              disabled={!mode}
-              placeholder={
-                mode ? t('Price (blank = system default)') : t('System default')
-              }
-              onChange={(e) => {
-                const value = e.target.value
-                const parsed = Number.parseFloat(value)
-                const nextPrice =
-                  value === '' || (Number.isFinite(parsed) && parsed >= 0)
-                    ? value
-                    : price
-                onTaskBillingChange?.(model.name, mode || 'not-set', nextPrice)
-              }}
-              className='h-8 w-24 text-xs'
-              aria-label={t('Task billing price')}
-            />
-          </div>
-        )
-      },
-      enableHiding: true,
-      meta: { label: t('Task billing') },
     },
     {
       id: 'actions',

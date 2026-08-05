@@ -453,66 +453,15 @@ const ModelRatioVisualEditorComponent = forwardRef<
     ]
   )
 
-  // 行内修改任务/视频模型的显式计费模式（per_call / per_second）或价格。
-  // 模式写入 billing_setting.task_billing_mode；
-  // 按次价格写入 ModelPrice，按秒价格写入 ModelRatio。
-  const handleTaskBillingChange = useCallback(
-    (name: string, mode: string, price: string) => {
-      const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
-        fallback: {},
-        silent: true,
-      })
-      const ratioMap = safeJsonParse<Record<string, number>>(modelRatio, {
-        fallback: {},
-        silent: true,
-      })
-      const taskBillingModeMap = safeJsonParse<Record<string, string>>(
-        taskBillingMode,
-        { fallback: {}, silent: true }
-      )
-
-      if (mode === 'per_call' || mode === 'per_second') {
-        taskBillingModeMap[name] = mode
-      } else {
-        delete taskBillingModeMap[name]
-      }
-
-      if (mode === 'per_call') {
-        if (price && price !== '') {
-          const parsed = Number.parseFloat(price)
-          if (Number.isFinite(parsed)) priceMap[name] = parsed
-        } else {
-          delete priceMap[name]
-        }
-      } else if (mode === 'per_second') {
-        if (price && price !== '') {
-          const parsed = Number.parseFloat(price)
-          if (Number.isFinite(parsed)) ratioMap[name] = parsed
-        } else {
-          delete ratioMap[name]
-        }
-      }
-
-      onChange('ModelPrice', JSON.stringify(priceMap, null, 2))
-      onChange('ModelRatio', JSON.stringify(ratioMap, null, 2))
-      onChange(
-        'billing_setting.task_billing_mode',
-        JSON.stringify(taskBillingModeMap, null, 2)
-      )
-    },
-    [modelPrice, modelRatio, taskBillingMode, onChange]
-  )
-
   const columns = useMemo(
     () =>
       buildModelRatioColumns({
         onDelete: handleDelete,
         onEdit: handleEdit,
-        onTaskBillingChange: handleTaskBillingChange,
         deleteDisabled: filterMode === 'unset',
         t,
       }),
-    [handleEdit, handleDelete, handleTaskBillingChange, filterMode, t]
+    [handleEdit, handleDelete, filterMode, t]
   )
 
   const ensurePageInRange = useCallback((pageCount: number) => {
@@ -639,6 +588,12 @@ const ModelRatioVisualEditorComponent = forwardRef<
           setIfPresent(imageMap, name, data.imageRatio)
           setIfPresent(audioMap, name, data.audioRatio)
           setIfPresent(audioCompletionMap, name, data.audioCompletionRatio)
+        } else if (data.taskBillingMode === 'per_second') {
+          // 按秒计费：每秒价格写 ModelRatio，与按次价格（ModelPrice）互斥。
+          setIfPresent(ratioMap, name, data.taskSecondPrice)
+        } else if (data.taskBillingMode === 'per_call') {
+          // 按次计费：固定价格写 ModelPrice，不写 ModelRatio。
+          setIfPresent(priceMap, name, data.price)
         } else if (data.price && data.price !== '') {
           setIfPresent(priceMap, name, data.price)
         } else {

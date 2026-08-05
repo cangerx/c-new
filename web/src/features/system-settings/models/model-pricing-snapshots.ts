@@ -82,15 +82,24 @@ const ratioToPrice = (ratio?: string, denominator?: string) => {
   return formatPricingNumber(ratioNumber * denominatorNumber)
 }
 
-export const getModeLabel = (mode?: string) => {
+// 显式配置了任务计费模式的模型按其真实模式显示；未配置的模型走原有的
+// ModelPrice 反推逻辑，显示保持不变。按秒计费的价格存在 ModelRatio 而非
+// ModelPrice，若不看 taskBillingMode 会被误判成「按 Token」。
+export const getModeLabel = (mode?: string, taskBillingMode?: string) => {
+  if (taskBillingMode === 'per_call') return 'Per call'
+  if (taskBillingMode === 'per_second') return 'Per second'
   if (mode === 'per-request') return 'Per-request'
   if (mode === 'tiered_expr') return 'Expression'
   return 'Per-token'
 }
 
 export const getModeVariant = (
-  mode?: string
+  mode?: string,
+  taskBillingMode?: string
 ): 'warning' | 'info' | 'success' => {
+  if (taskBillingMode === 'per_call' || taskBillingMode === 'per_second') {
+    return 'warning'
+  }
   if (mode === 'per-request') return 'warning'
   if (mode === 'tiered_expr') return 'info'
   return 'success'
@@ -113,6 +122,14 @@ export const getPriceSummary = (
 ) => {
   if (row.billingMode === 'tiered_expr') {
     return getExpressionSummary(row, t)
+  }
+  // 任务计费的价格不是 token 倍率：按次读 ModelPrice，按秒读 ModelRatio 且
+  // 单位就是每秒美元，不能走 ratioToPrice 的 per-1M-token 换算。
+  if (row.taskBillingMode === 'per_call') {
+    return row.price ? `$${row.price} / ${t('call')}` : t('System default')
+  }
+  if (row.taskBillingMode === 'per_second') {
+    return row.ratio ? `$${row.ratio} / ${t('second')}` : t('System default')
   }
   if (row.billingMode === 'per-request') {
     return row.price ? `$${row.price} / ${t('request')}` : t('Unset price')
@@ -143,6 +160,12 @@ export const getPriceDetail = (
     return row.requestRuleExpr
       ? t('Includes request rules')
       : t('Expression based')
+  }
+  if (row.taskBillingMode === 'per_call') {
+    return t('Fixed price per task')
+  }
+  if (row.taskBillingMode === 'per_second') {
+    return t('Priced per second of output')
   }
   if (row.billingMode === 'per-request') {
     return t('Fixed request price')

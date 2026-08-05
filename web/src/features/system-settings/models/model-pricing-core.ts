@@ -62,7 +62,11 @@ export type ModelRatioData = {
   billingMode?: PricingMode
   billingExpr?: string
   requestRuleExpr?: string
+  // 任务/视频模型的显式计费模式："per_call" | "per_second" | ""（空=用系统默认）
   taskBillingMode?: string
+  // 按秒计费的每秒价格。后端从 ModelRatio 读取，与按次价格（ModelPrice）互斥，
+  // 且不能复用 ratio 字段——那是 per-token 的输入倍率。
+  taskSecondPrice?: string
 }
 
 export type PreviewRow = {

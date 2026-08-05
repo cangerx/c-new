@@ -53,6 +53,7 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from '@/components/ui/input-group'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   Sheet,
   SheetContent,
@@ -155,6 +156,9 @@ export const ModelPricingEditorPanel = forwardRef<
   })
   const [billingExpr, setBillingExpr] = useState('')
   const [requestRuleExpr, setRequestRuleExpr] = useState('')
+  // 任务/视频模型的显式计费模式，空串表示沿用「额度设置」里的系统默认。
+  const [taskBillingMode, setTaskBillingMode] = useState('')
+  const [taskSecondPrice, setTaskSecondPrice] = useState('')
   const [editorReloadToken, setEditorReloadToken] = useState(0)
   const isEditMode = !!editData
 
@@ -188,15 +192,25 @@ export const ModelPricingEditorPanel = forwardRef<
         audioRatio: editData.audioRatio || '',
         audioCompletionRatio: editData.audioCompletionRatio || '',
       })
+      // 显式配置了任务计费的模型直接落在「按次」tab——设置项在那里。按秒计费的
+      // 模型 price 为空，若只看 price 会被误判成「按 Token」。
+      const hasTaskBilling =
+        editData.taskBillingMode === 'per_call' ||
+        editData.taskBillingMode === 'per_second'
       setPricingMode(
         editData.billingMode === 'tiered_expr'
           ? 'tiered_expr'
-          : editData.price
+          : hasTaskBilling || editData.price
             ? 'per-request'
             : 'per-token'
       )
       setBillingExpr(editData.billingExpr || '')
       setRequestRuleExpr(editData.requestRuleExpr || '')
+      setTaskBillingMode(editData.taskBillingMode || '')
+      // 按秒模式下，后端读的 ModelRatio 就是每秒价格，即 snapshot 的 ratio。
+      setTaskSecondPrice(
+        editData.taskBillingMode === 'per_second' ? editData.ratio || '' : ''
+      )
     } else {
       form.reset({
         name: '',
@@ -212,6 +226,8 @@ export const ModelPricingEditorPanel = forwardRef<
       setPricingMode('per-token')
       setBillingExpr('')
       setRequestRuleExpr('')
+      setTaskBillingMode('')
+      setTaskSecondPrice('')
     }
 
     setPromptPrice(nextLaneState.promptPrice)
@@ -451,7 +467,14 @@ export const ModelPricingEditorPanel = forwardRef<
         imageRatio: values.imageRatio || '',
         audioRatio: values.audioRatio || '',
         audioCompletionRatio: values.audioCompletionRatio || '',
-        taskBillingMode: editData?.taskBillingMode || '',
+        // 任务计费只在「按次」tab 下存在。从其他 tab 保存必须清空它，不能沿用
+        // 原值：per_second 会继续占用 ModelRatio 这个槽位，把用户刚填的
+        // per-token 倍率丢掉，而且没法从「按 Token」tab 退出该模式。
+        taskBillingMode: pricingMode === 'per-request' ? taskBillingMode : '',
+        taskSecondPrice:
+          pricingMode === 'per-request' && taskBillingMode === 'per_second'
+            ? taskSecondPrice
+            : '',
       }
 
       if (pricingMode === 'tiered_expr') {
@@ -461,7 +484,13 @@ export const ModelPricingEditorPanel = forwardRef<
 
       return data
     },
-    [billingExpr, editData, pricingMode, requestRuleExpr]
+    [
+      billingExpr,
+      pricingMode,
+      requestRuleExpr,
+      taskBillingMode,
+      taskSecondPrice,
+    ]
   )
 
   useImperativeHandle(
@@ -601,6 +630,52 @@ export const ModelPricingEditorPanel = forwardRef<
 
                   <TabsContent value='per-request' className='pt-0'>
                     <FieldGroup className='gap-5'>
+                      <Field>
+                        <FieldLabel>{t('Task billing mode')}</FieldLabel>
+                        <RadioGroup
+                          value={taskBillingMode || 'default'}
+                          onValueChange={(value) => {
+                            setTaskBillingMode(
+                              value === null || value === 'default' ? '' : value
+                            )
+                          }}
+                          className='flex flex-col gap-2'
+                        >
+                          <div className='flex items-center gap-2'>
+                            <RadioGroupItem
+                              value='default'
+                              id='task-billing-default'
+                            />
+                            <label htmlFor='task-billing-default'>
+                              {t('Use system default')}
+                            </label>
+                          </div>
+                          <div className='flex items-center gap-2'>
+                            <RadioGroupItem
+                              value='per_call'
+                              id='task-billing-per-call'
+                            />
+                            <label htmlFor='task-billing-per-call'>
+                              {t('Per call')}
+                            </label>
+                          </div>
+                          <div className='flex items-center gap-2'>
+                            <RadioGroupItem
+                              value='per_second'
+                              id='task-billing-per-second'
+                            />
+                            <label htmlFor='task-billing-per-second'>
+                              {t('Per second')}
+                            </label>
+                          </div>
+                        </RadioGroup>
+                        <FieldDescription>
+                          {t(
+                            'Applies to task/video models only. Use system default falls back to Quota Settings.'
+                          )}
+                        </FieldDescription>
+                      </Field>
+
                       <FormField
                         control={form.control}
                         name='price'
@@ -614,6 +689,7 @@ export const ModelPricingEditorPanel = forwardRef<
                                   <InputGroupInput
                                     inputMode='decimal'
                                     placeholder='0.01'
+                                    disabled={taskBillingMode === 'per_second'}
                                     {...field}
                                     onChange={(event) => {
                                       const value = event.target.value
@@ -637,6 +713,33 @@ export const ModelPricingEditorPanel = forwardRef<
                           </FormItem>
                         )}
                       />
+
+                      <Field>
+                        <FieldLabel>{t('Per-second price')}</FieldLabel>
+                        <InputGroup>
+                          <InputGroupAddon>$</InputGroupAddon>
+                          <InputGroupInput
+                            inputMode='decimal'
+                            placeholder='0.04'
+                            value={taskSecondPrice}
+                            disabled={taskBillingMode !== 'per_second'}
+                            onChange={(event) => {
+                              const value = event.target.value
+                              if (numericDraftRegex.test(value)) {
+                                setTaskSecondPrice(value)
+                              }
+                            }}
+                          />
+                          <InputGroupAddon align='inline-end'>
+                            {t('per second')}
+                          </InputGroupAddon>
+                        </InputGroup>
+                        <FieldDescription>
+                          {t(
+                            'Cost in USD per second of generated video. Stored in ModelRatio.'
+                          )}
+                        </FieldDescription>
+                      </Field>
                     </FieldGroup>
                   </TabsContent>
 

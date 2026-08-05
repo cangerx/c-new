@@ -71,6 +71,9 @@ const BILLING_SECTIONS = [
           quota_setting: {
             enable_free_model_pre_consume:
               settings['quota_setting.enable_free_model_pre_consume'],
+            default_task_billing_mode:
+              settings['quota_setting.default_task_billing_mode'],
+            default_task_price: settings['quota_setting.default_task_price'],
           },
         }}
         complianceConfirmed={
