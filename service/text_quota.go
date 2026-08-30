@@ -396,7 +396,7 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
 	originUsage := usage
-	billingUsage := effectiveBillingUsage(usage)
+	billingUsage := SanitizeUsageForBilling(ctx, relayInfo, effectiveBillingUsage(usage), nil)
 	if usage == nil {
 		extraContent = append(extraContent, "上游无计费信息")
 	}

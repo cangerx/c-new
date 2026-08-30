@@ -34,20 +34,21 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
-	// 写入新的 response body
-	service.IOCopyBytesGracefully(c, resp, responseBody)
-
 	// compute usage
-	usage := dto.Usage{}
+	var reportedUsage *dto.Usage
 	if responsesResponse.Usage != nil {
-		usage.PromptTokens = responsesResponse.Usage.InputTokens
-		usage.CompletionTokens = responsesResponse.Usage.OutputTokens
-		usage.TotalTokens = responsesResponse.Usage.TotalTokens
-		if responsesResponse.Usage.InputTokensDetails != nil {
-			usage.PromptTokensDetails.CachedTokens = responsesResponse.Usage.InputTokensDetails.CachedTokens
-			usage.PromptTokensDetails.CacheWriteTokens = responsesResponse.Usage.InputTokensDetails.CacheWriteTokens
-		}
+		reportedUsage = responsesResponse.Usage
+		reportedUsage.BillingUsage = nil
 	}
+	completionTokens := countResponsesOutputTokens(responsesResponse.Output, usageModelName(info))
+	usage := service.SanitizeUsageForBilling(c, info, reportedUsage, &dto.Usage{
+		PromptTokens:     info.GetEstimatePromptTokens(),
+		CompletionTokens: completionTokens,
+		TotalTokens:      info.GetEstimatePromptTokens() + completionTokens,
+	})
+	responsesResponse.Usage = usage
+	responseBody = replaceTopLevelUsage(responseBody, usage)
+	service.IOCopyBytesGracefully(c, resp, responseBody)
 	// Count actual tool invocations from Output (not tool declarations).
 	for _, output := range responsesResponse.Output {
 		switch output.Type {
@@ -69,7 +70,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	}
 	imageCounter.Commit(info)
 
-	return &usage, nil
+	return usage, nil
 }
 
 func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
@@ -82,6 +83,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
+	usageSnapshotCount := 0
 	imageCounter := &relaycommon.ImageGenerationCallCounter{}
 	imageCommitted := false
 
@@ -94,25 +96,30 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
-		sendResponsesStreamData(c, streamResponse, data)
+		forwardData := rewriteStreamUsage(data, nil, true)
+		var directUsage struct {
+			Usage *dto.Usage `json:"usage"`
+		}
+		if err := common.UnmarshalJsonStr(data, &directUsage); err == nil && directUsage.Usage != nil {
+			service.RecordUsageAnomaly(c, "unexpected_top_level_responses_stream_usage")
+		}
+		if streamResponse.Response != nil && streamResponse.Response.Usage != nil {
+			streamResponse.Response.Usage.BillingUsage = nil
+			usageSnapshotCount++
+			if usageSnapshotCount == 1 {
+				localCompletion := service.CountTextToken(responseTextBuilder.String(), info.UpstreamModelName)
+				usage = service.SanitizeUsageForBilling(c, info, streamResponse.Response.Usage, &dto.Usage{
+					PromptTokens:     info.GetEstimatePromptTokens(),
+					CompletionTokens: localCompletion,
+					TotalTokens:      info.GetEstimatePromptTokens() + localCompletion,
+				})
+				forwardData = rewriteStreamUsage(data, usage, true)
+			}
+		}
+		sendResponsesStreamData(c, streamResponse, forwardData)
 		switch streamResponse.Type {
 		case "response.completed", "response.done":
 			if streamResponse.Response != nil {
-				if streamResponse.Response.Usage != nil {
-					if streamResponse.Response.Usage.InputTokens != 0 {
-						usage.PromptTokens = streamResponse.Response.Usage.InputTokens
-					}
-					if streamResponse.Response.Usage.OutputTokens != 0 {
-						usage.CompletionTokens = streamResponse.Response.Usage.OutputTokens
-					}
-					if streamResponse.Response.Usage.TotalTokens != 0 {
-						usage.TotalTokens = streamResponse.Response.Usage.TotalTokens
-					}
-					if streamResponse.Response.Usage.InputTokensDetails != nil {
-						usage.PromptTokensDetails.CachedTokens = streamResponse.Response.Usage.InputTokensDetails.CachedTokens
-						usage.PromptTokensDetails.CacheWriteTokens = streamResponse.Response.Usage.InputTokensDetails.CacheWriteTokens
-					}
-				}
 				if !imageCommitted {
 					if relaycommon.IsNonBillableResponsesStatus(streamResponse.Response.Status) {
 						imageCounter.Reset()
@@ -157,8 +164,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 		}
 	})
+	if usageSnapshotCount > 1 {
+		service.RecordUsageAnomaly(c, fmt.Sprintf("multiple_responses_stream_usage_snapshots=%d", usageSnapshotCount))
+	}
 
-	if usage.CompletionTokens == 0 {
+	if usageSnapshotCount == 0 {
+		usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+	} else if usage.CompletionTokens == 0 {
 		// 计算输出文本的 token 数量
 		tempStr := responseTextBuilder.String()
 		if len(tempStr) > 0 {
@@ -175,4 +187,26 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 
 	return usage, nil
+}
+
+func countResponsesOutputTokens(outputs []dto.ResponsesOutput, model string) int {
+	var content strings.Builder
+	for _, output := range outputs {
+		content.WriteString(output.Name)
+		content.Write(output.Arguments)
+		for _, part := range output.Content {
+			content.WriteString(part.Text)
+		}
+	}
+	return service.EstimateTokenByModel(model, content.String())
+}
+
+func usageModelName(info *relaycommon.RelayInfo) string {
+	if info == nil {
+		return ""
+	}
+	if info.ChannelMeta != nil && info.UpstreamModelName != "" {
+		return info.UpstreamModelName
+	}
+	return info.OriginModelName
 }

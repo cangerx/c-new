@@ -1,7 +1,10 @@
 package openai
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
+	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -31,9 +34,10 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	receiveChan := make(chan []byte, 100)
 	errChan := make(chan error, 2)
 
-	usage := &dto.RealtimeUsage{}
 	localUsage := &dto.RealtimeUsage{}
 	sumUsage := &dto.RealtimeUsage{}
+	usageTracker := newRealtimeUsageTracker()
+	var usageMu sync.Mutex
 
 	gopool.Go(func() {
 		defer func() {
@@ -76,10 +80,12 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					return
 				}
 				logger.LogInfo(c, fmt.Sprintf("type: %s, textToken: %d, audioToken: %d", realtimeEvent.Type, textToken, audioToken))
+				usageMu.Lock()
 				localUsage.TotalTokens += textToken + audioToken
 				localUsage.InputTokens += textToken + audioToken
 				localUsage.InputTokenDetails.TextTokens += textToken
 				localUsage.InputTokenDetails.AudioTokens += audioToken
+				usageMu.Unlock()
 
 				err = helper.WssString(c, targetConn, string(message))
 				if err != nil {
@@ -123,49 +129,42 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 				}
 
 				if realtimeEvent.Type == dto.RealtimeEventTypeResponseDone {
-					realtimeUsage := realtimeEvent.Response.Usage
-					if realtimeUsage != nil {
-						usage.TotalTokens += realtimeUsage.TotalTokens
-						usage.InputTokens += realtimeUsage.InputTokens
-						usage.OutputTokens += realtimeUsage.OutputTokens
-						usage.InputTokenDetails.AudioTokens += realtimeUsage.InputTokenDetails.AudioTokens
-						usage.InputTokenDetails.CachedTokens += realtimeUsage.InputTokenDetails.CachedTokens
-						usage.InputTokenDetails.TextTokens += realtimeUsage.InputTokenDetails.TextTokens
-						usage.OutputTokenDetails.AudioTokens += realtimeUsage.OutputTokenDetails.AudioTokens
-						usage.OutputTokenDetails.TextTokens += realtimeUsage.OutputTokenDetails.TextTokens
-						err := preConsumeUsage(c, info, usage, sumUsage)
-						if err != nil {
-							errChan <- fmt.Errorf("error consume usage: %v", err)
-							return
-						}
-						// 本次计费完成，清除
-						usage = &dto.RealtimeUsage{}
+					textToken, audioToken, countErr := service.CountTokenRealtime(info, *realtimeEvent, info.UpstreamModelName)
+					if countErr != nil {
+						errChan <- fmt.Errorf("error counting text token: %v", countErr)
+						return
+					}
+					usageMu.Lock()
+					localUsage.TotalTokens += textToken + audioToken
+					localUsage.InputTokens += textToken + audioToken
+					localUsage.InputTokenDetails.TextTokens += textToken
+					localUsage.InputTokenDetails.AudioTokens += audioToken
+					localSnapshot := *localUsage
+					accepted := usageTracker.Accept(realtimeEvent)
+					if accepted {
+						localUsage = &dto.RealtimeUsage{}
+					}
+					usageMu.Unlock()
 
-						localUsage = &dto.RealtimeUsage{}
+					if !accepted {
+						service.RecordUsageAnomaly(c, "duplicate_realtime_response_done")
+						message = rewriteRealtimeUsage(message, nil)
 					} else {
-						textToken, audioToken, err := service.CountTokenRealtime(info, *realtimeEvent, info.UpstreamModelName)
-						if err != nil {
-							errChan <- fmt.Errorf("error counting text token: %v", err)
-							return
+						var reported *dto.RealtimeUsage
+						if realtimeEvent.Response != nil {
+							reported = realtimeEvent.Response.Usage
 						}
-						logger.LogInfo(c, fmt.Sprintf("type: %s, textToken: %d, audioToken: %d", realtimeEvent.Type, textToken, audioToken))
-						localUsage.TotalTokens += textToken + audioToken
+						safeUsage := service.SanitizeRealtimeUsage(c, reported, &localSnapshot)
+						if safeUsage.TotalTokens > 0 {
+							if err := preConsumeUsage(c, info, safeUsage, sumUsage); err != nil {
+								errChan <- fmt.Errorf("error consume usage: %v", err)
+								return
+							}
+						}
+						message = rewriteRealtimeUsage(message, safeUsage)
 						info.IsFirstRequest = false
-						localUsage.InputTokens += textToken + audioToken
-						localUsage.InputTokenDetails.TextTokens += textToken
-						localUsage.InputTokenDetails.AudioTokens += audioToken
-						err = preConsumeUsage(c, info, localUsage, sumUsage)
-						if err != nil {
-							errChan <- fmt.Errorf("error consume usage: %v", err)
-							return
-						}
-						// 本次计费完成，清除
-						localUsage = &dto.RealtimeUsage{}
-						// print now usage
 					}
 					logger.LogInfo(c, fmt.Sprintf("realtime streaming sumUsage: %v", sumUsage))
-					logger.LogInfo(c, fmt.Sprintf("realtime streaming localUsage: %v", localUsage))
-					logger.LogInfo(c, fmt.Sprintf("realtime streaming localUsage: %v", localUsage))
 
 				} else if realtimeEvent.Type == dto.RealtimeEventTypeSessionUpdated || realtimeEvent.Type == dto.RealtimeEventTypeSessionCreated {
 					realtimeSession := realtimeEvent.Session
@@ -181,10 +180,12 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 						return
 					}
 					logger.LogInfo(c, fmt.Sprintf("type: %s, textToken: %d, audioToken: %d", realtimeEvent.Type, textToken, audioToken))
+					usageMu.Lock()
 					localUsage.TotalTokens += textToken + audioToken
 					localUsage.OutputTokens += textToken + audioToken
 					localUsage.OutputTokenDetails.TextTokens += textToken
 					localUsage.OutputTokenDetails.AudioTokens += audioToken
+					usageMu.Unlock()
 				}
 
 				err = helper.WssString(c, clientConn, string(message))
@@ -210,12 +211,12 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	case <-c.Done():
 	}
 
-	if usage.TotalTokens != 0 {
-		_ = preConsumeUsage(c, info, usage, sumUsage)
-	}
-
-	if localUsage.TotalTokens != 0 {
-		_ = preConsumeUsage(c, info, localUsage, sumUsage)
+	usageMu.Lock()
+	remainingUsage := *localUsage
+	localUsage = &dto.RealtimeUsage{}
+	usageMu.Unlock()
+	if remainingUsage.TotalTokens != 0 {
+		_ = preConsumeUsage(c, info, &remainingUsage, sumUsage)
 	}
 
 	// check usage total tokens, if 0, use local usage
@@ -223,20 +224,92 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	return nil, sumUsage
 }
 
+type realtimeUsageTracker struct {
+	seen          map[string]struct{}
+	anonymousDone bool
+}
+
+func newRealtimeUsageTracker() *realtimeUsageTracker {
+	return &realtimeUsageTracker{seen: make(map[string]struct{})}
+}
+
+func (t *realtimeUsageTracker) Accept(event *dto.RealtimeEvent) bool {
+	if t == nil || event == nil || event.Type != dto.RealtimeEventTypeResponseDone {
+		return false
+	}
+	key := ""
+	if event.Response != nil {
+		key = event.Response.Id
+	}
+	if key == "" {
+		key = event.EventId
+	}
+	if key == "" {
+		if t.anonymousDone {
+			return false
+		}
+		t.anonymousDone = true
+		return true
+	}
+	if _, exists := t.seen[key]; exists {
+		return false
+	}
+	t.seen[key] = struct{}{}
+	return true
+}
+
+func rewriteRealtimeUsage(message []byte, usage *dto.RealtimeUsage) []byte {
+	var payload map[string]json.RawMessage
+	if err := common.Unmarshal(message, &payload); err != nil {
+		return message
+	}
+	delete(payload, "usage")
+	rawResponse, ok := payload["response"]
+	if !ok {
+		return message
+	}
+	var response map[string]json.RawMessage
+	if err := common.Unmarshal(rawResponse, &response); err != nil {
+		return message
+	}
+	if usage == nil {
+		delete(response, "usage")
+	} else if raw, err := common.Marshal(usage); err == nil {
+		response["usage"] = raw
+	}
+	rewrittenResponse, err := common.Marshal(response)
+	if err != nil {
+		return message
+	}
+	payload["response"] = rewrittenResponse
+	rewritten, err := common.Marshal(payload)
+	if err != nil {
+		return message
+	}
+	return rewritten
+}
+
 func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.RealtimeUsage, totalUsage *dto.RealtimeUsage) error {
 	if usage == nil || totalUsage == nil {
 		return fmt.Errorf("invalid usage pointer")
 	}
 
-	totalUsage.TotalTokens += usage.TotalTokens
-	totalUsage.InputTokens += usage.InputTokens
-	totalUsage.OutputTokens += usage.OutputTokens
-	totalUsage.InputTokenDetails.CachedTokens += usage.InputTokenDetails.CachedTokens
-	totalUsage.InputTokenDetails.TextTokens += usage.InputTokenDetails.TextTokens
-	totalUsage.InputTokenDetails.AudioTokens += usage.InputTokenDetails.AudioTokens
-	totalUsage.OutputTokenDetails.TextTokens += usage.OutputTokenDetails.TextTokens
-	totalUsage.OutputTokenDetails.AudioTokens += usage.OutputTokenDetails.AudioTokens
+	totalUsage.TotalTokens = addRealtimeTokenCount(totalUsage.TotalTokens, usage.TotalTokens)
+	totalUsage.InputTokens = addRealtimeTokenCount(totalUsage.InputTokens, usage.InputTokens)
+	totalUsage.OutputTokens = addRealtimeTokenCount(totalUsage.OutputTokens, usage.OutputTokens)
+	totalUsage.InputTokenDetails.CachedTokens = addRealtimeTokenCount(totalUsage.InputTokenDetails.CachedTokens, usage.InputTokenDetails.CachedTokens)
+	totalUsage.InputTokenDetails.TextTokens = addRealtimeTokenCount(totalUsage.InputTokenDetails.TextTokens, usage.InputTokenDetails.TextTokens)
+	totalUsage.InputTokenDetails.AudioTokens = addRealtimeTokenCount(totalUsage.InputTokenDetails.AudioTokens, usage.InputTokenDetails.AudioTokens)
+	totalUsage.OutputTokenDetails.TextTokens = addRealtimeTokenCount(totalUsage.OutputTokenDetails.TextTokens, usage.OutputTokenDetails.TextTokens)
+	totalUsage.OutputTokenDetails.AudioTokens = addRealtimeTokenCount(totalUsage.OutputTokenDetails.AudioTokens, usage.OutputTokenDetails.AudioTokens)
 	// clear usage
 	err := service.PreWssConsumeQuota(ctx, info, usage)
 	return err
+}
+
+func addRealtimeTokenCount(current, delta int) int {
+	if current < 0 || delta < 0 || current > math.MaxInt-delta {
+		return math.MaxInt
+	}
+	return current + delta
 }

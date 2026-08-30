@@ -16,6 +16,8 @@ const (
 	RealtimeEventTypeSessionCreated                 = "session.created"
 	RealtimeEventResponseAudioDelta                 = "response.audio.delta"
 	RealtimeEventResponseAudioTranscriptionDelta    = "response.audio_transcript.delta"
+	RealtimeEventResponseTextDelta                  = "response.text.delta"
+	RealtimeEventResponseOutputTextDelta            = "response.output_text.delta"
 	RealtimeEventResponseFunctionCallArgumentsDelta = "response.function_call_arguments.delta"
 	RealtimeEventResponseFunctionCallArgumentsDone  = "response.function_call_arguments.done"
 	RealtimeEventConversationItemCreated            = "conversation.item.created"
@@ -34,6 +36,7 @@ type RealtimeEvent struct {
 }
 
 type RealtimeResponse struct {
+	Id    string         `json:"id,omitempty"`
 	Usage *RealtimeUsage `json:"usage"`
 }
 

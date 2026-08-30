@@ -54,6 +54,9 @@ const (
 	ContextKeyUserName    ContextKey = "username"
 
 	ContextKeyLocalCountTokens ContextKey = "local_count_tokens"
+	// ContextKeyUsageAnomalies stores admin-only reasons for rejecting or
+	// de-duplicating untrusted upstream usage snapshots.
+	ContextKeyUsageAnomalies ContextKey = "usage_anomalies"
 
 	ContextKeySystemPromptOverride ContextKey = "system_prompt_override"
 

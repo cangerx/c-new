@@ -1,11 +1,81 @@
 package openai
 
 import (
+	"encoding/json"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 )
+
+// rewriteStreamUsage preserves provider-specific fields while removing or
+// replacing untrusted usage at the two locations used by Chat Completions and
+// Responses stream events.
+func rewriteStreamUsage(data string, usage *dto.Usage, nestedResponse bool) string {
+	if data == "" {
+		return data
+	}
+	var payload map[string]json.RawMessage
+	if err := common.UnmarshalJsonStr(data, &payload); err != nil {
+		return data
+	}
+
+	changed := false
+	if _, ok := payload["usage"]; ok {
+		changed = true
+		if usage == nil {
+			delete(payload, "usage")
+		} else if raw, err := common.Marshal(usage); err == nil {
+			payload["usage"] = raw
+		}
+	}
+
+	if nestedResponse {
+		if rawResponse, ok := payload["response"]; ok {
+			var response map[string]json.RawMessage
+			if err := common.Unmarshal(rawResponse, &response); err == nil {
+				if _, hasUsage := response["usage"]; hasUsage {
+					changed = true
+					if usage == nil {
+						delete(response, "usage")
+					} else if raw, err := common.Marshal(usage); err == nil {
+						response["usage"] = raw
+					}
+					if raw, err := common.Marshal(response); err == nil {
+						payload["response"] = raw
+					}
+				}
+			}
+		}
+	}
+
+	if !changed {
+		return data
+	}
+	rewritten, err := common.Marshal(payload)
+	if err != nil {
+		return data
+	}
+	return string(rewritten)
+}
+
+func replaceTopLevelUsage(body []byte, usage *dto.Usage) []byte {
+	var payload map[string]json.RawMessage
+	if err := common.Unmarshal(body, &payload); err != nil {
+		return body
+	}
+	if usage == nil {
+		delete(payload, "usage")
+	} else if raw, err := common.Marshal(usage); err == nil {
+		payload["usage"] = raw
+	}
+	rewritten, err := common.Marshal(payload)
+	if err != nil {
+		return body
+	}
+	return rewritten
+}
 
 func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, responseBody []byte) {
 	if info == nil || usage == nil {
