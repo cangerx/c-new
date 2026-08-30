@@ -23,6 +23,7 @@ import { formatPricingNumber } from './pricing-format'
 
 export type ModelPricingSnapshotInput = {
   modelPrice: string
+  videoModelPrice: string
   modelRatio: string
   cacheRatio: string
   createCacheRatio: string
@@ -32,12 +33,12 @@ export type ModelPricingSnapshotInput = {
   audioCompletionRatio: string
   billingMode: string
   billingExpr: string
-  taskBillingMode: string
 }
 
 export type ModelPricingSnapshot = {
   name: string
   price?: string
+  videoPrice?: string
   ratio?: string
   cacheRatio?: string
   createCacheRatio?: string
@@ -47,7 +48,6 @@ export type ModelPricingSnapshot = {
   audioCompletionRatio?: string
   billingMode?: string
   billingExpr?: string
-  taskBillingMode?: string
   requestRuleExpr?: string
   hasConflict: boolean
 }
@@ -67,6 +67,7 @@ export const isBasePricingUnset = (snapshot?: ModelPricingSnapshot) =>
   !snapshot ||
   (snapshot.billingMode !== 'tiered_expr' &&
     !hasPricingValue(snapshot.price) &&
+    !hasPricingValue(snapshot.videoPrice) &&
     !hasPricingValue(snapshot.ratio))
 
 const toNumberOrNull = (value?: string) => {
@@ -82,25 +83,18 @@ const ratioToPrice = (ratio?: string, denominator?: string) => {
   return formatPricingNumber(ratioNumber * denominatorNumber)
 }
 
-// 显式配置了任务计费模式的模型按其真实模式显示；未配置的模型走原有的
-// ModelPrice 反推逻辑，显示保持不变。按秒计费的价格存在 ModelRatio 而非
-// ModelPrice，若不看 taskBillingMode 会被误判成「按 Token」。
-export const getModeLabel = (mode?: string, taskBillingMode?: string) => {
-  if (taskBillingMode === 'per_call') return 'Per call'
-  if (taskBillingMode === 'per_second') return 'Per second'
+export const getModeLabel = (mode?: string) => {
   if (mode === 'per-request') return 'Per-request'
+  if (mode === 'video-per-request') return 'Video per-request'
   if (mode === 'tiered_expr') return 'Expression'
   return 'Per-token'
 }
 
 export const getModeVariant = (
-  mode?: string,
-  taskBillingMode?: string
+  mode?: string
 ): 'warning' | 'info' | 'success' => {
-  if (taskBillingMode === 'per_call' || taskBillingMode === 'per_second') {
-    return 'warning'
-  }
   if (mode === 'per-request') return 'warning'
+  if (mode === 'video-per-request') return 'info'
   if (mode === 'tiered_expr') return 'info'
   return 'success'
 }
@@ -123,16 +117,13 @@ export const getPriceSummary = (
   if (row.billingMode === 'tiered_expr') {
     return getExpressionSummary(row, t)
   }
-  // 任务计费的价格不是 token 倍率：按次读 ModelPrice，按秒读 ModelRatio 且
-  // 单位就是每秒美元，不能走 ratioToPrice 的 per-1M-token 换算。
-  if (row.taskBillingMode === 'per_call') {
-    return row.price ? `$${row.price} / ${t('call')}` : t('System default')
-  }
-  if (row.taskBillingMode === 'per_second') {
-    return row.ratio ? `$${row.ratio} / ${t('second')}` : t('System default')
-  }
   if (row.billingMode === 'per-request') {
     return row.price ? `$${row.price} / ${t('request')}` : t('Unset price')
+  }
+  if (row.billingMode === 'video-per-request') {
+    return row.videoPrice
+      ? `$${row.videoPrice} / ${t('video request')}`
+      : t('Unset price')
   }
 
   const inputPrice = ratioToPrice(row.ratio)
@@ -161,14 +152,11 @@ export const getPriceDetail = (
       ? t('Includes request rules')
       : t('Expression based')
   }
-  if (row.taskBillingMode === 'per_call') {
-    return t('Fixed price per task')
-  }
-  if (row.taskBillingMode === 'per_second') {
-    return t('Priced per second of output')
-  }
   if (row.billingMode === 'per-request') {
     return t('Fixed request price')
+  }
+  if (row.billingMode === 'video-per-request') {
+    return t('Fixed video request price')
   }
 
   const inputPrice = ratioToPrice(row.ratio)
@@ -190,6 +178,7 @@ export const getPriceDetail = (
 
 export const buildModelSnapshots = ({
   modelPrice,
+  videoModelPrice,
   modelRatio,
   cacheRatio,
   createCacheRatio,
@@ -199,11 +188,14 @@ export const buildModelSnapshots = ({
   audioCompletionRatio,
   billingMode,
   billingExpr,
-  taskBillingMode,
 }: ModelPricingSnapshotInput): ModelPricingSnapshot[] => {
   const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
     fallback: {},
     context: 'model prices',
+  })
+  const videoPriceMap = safeJsonParse<Record<string, number>>(videoModelPrice, {
+    fallback: {},
+    context: 'video model prices',
   })
   const ratioMap = safeJsonParse<Record<string, number>>(modelRatio, {
     fallback: {},
@@ -241,16 +233,10 @@ export const buildModelSnapshots = ({
     fallback: {},
     context: 'billing expression',
   })
-  const taskBillingModeMap = safeJsonParse<Record<string, string>>(
-    taskBillingMode,
-    {
-      fallback: {},
-      context: 'task billing mode',
-    }
-  )
 
   const modelNames = new Set([
     ...Object.keys(priceMap),
+    ...Object.keys(videoPriceMap),
     ...Object.keys(ratioMap),
     ...Object.keys(cacheMap),
     ...Object.keys(createCacheMap),
@@ -260,11 +246,11 @@ export const buildModelSnapshots = ({
     ...Object.keys(audioCompletionMap),
     ...Object.keys(billingModeMap),
     ...Object.keys(billingExprMap),
-    ...Object.keys(taskBillingModeMap),
   ])
 
   return [...modelNames].map((name) => {
     const price = priceMap[name]?.toString() || ''
+    const videoPrice = videoPriceMap[name]?.toString() || ''
     const ratio = ratioMap[name]?.toString() || ''
     const cache = cacheMap[name]?.toString() || ''
     const createCache = createCacheMap[name]?.toString() || ''
@@ -284,6 +270,7 @@ export const buildModelSnapshots = ({
         billingExpr: pureExpr,
         requestRuleExpr,
         price,
+        videoPrice,
         ratio,
         cacheRatio: cache,
         createCacheRatio: createCache,
@@ -291,14 +278,21 @@ export const buildModelSnapshots = ({
         imageRatio: image,
         audioRatio: audio,
         audioCompletionRatio: audioCompletion,
-        taskBillingMode: taskBillingModeMap[name] || '',
         hasConflict: false,
       }
+    }
+
+    let resolvedBillingMode = 'per-token'
+    if (videoPrice !== '') {
+      resolvedBillingMode = 'video-per-request'
+    } else if (price !== '') {
+      resolvedBillingMode = 'per-request'
     }
 
     return {
       name,
       price,
+      videoPrice,
       ratio,
       cacheRatio: cache,
       createCacheRatio: createCache,
@@ -306,17 +300,16 @@ export const buildModelSnapshots = ({
       imageRatio: image,
       audioRatio: audio,
       audioCompletionRatio: audioCompletion,
-      taskBillingMode: taskBillingModeMap[name] || '',
-      billingMode: price !== '' ? 'per-request' : 'per-token',
+      billingMode: resolvedBillingMode,
       hasConflict:
-        price !== '' &&
-        (ratio !== '' ||
-          completion !== '' ||
-          cache !== '' ||
-          createCache !== '' ||
-          image !== '' ||
-          audio !== '' ||
-          audioCompletion !== ''),
+        [price, videoPrice, ratio].filter((value) => value !== '').length > 1 ||
+        ((price !== '' || videoPrice !== '') &&
+          (completion !== '' ||
+            cache !== '' ||
+            createCache !== '' ||
+            image !== '' ||
+            audio !== '' ||
+            audioCompletion !== '')),
     }
   })
 }
@@ -325,6 +318,7 @@ export const getSnapshotSignature = (snapshot?: ModelPricingSnapshot) => {
   if (!snapshot) return ''
   return JSON.stringify({
     price: snapshot.price || '',
+    videoPrice: snapshot.videoPrice || '',
     ratio: snapshot.ratio || '',
     cacheRatio: snapshot.cacheRatio || '',
     createCacheRatio: snapshot.createCacheRatio || '',
@@ -334,7 +328,6 @@ export const getSnapshotSignature = (snapshot?: ModelPricingSnapshot) => {
     audioCompletionRatio: snapshot.audioCompletionRatio || '',
     billingMode: snapshot.billingMode || 'per-token',
     billingExpr: snapshot.billingExpr || '',
-    taskBillingMode: snapshot.taskBillingMode || '',
     requestRuleExpr: snapshot.requestRuleExpr || '',
   })
 }

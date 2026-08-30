@@ -11,7 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -157,7 +156,7 @@ func TestModelPriceHelperTieredRejectsPreConsumeOverflow(t *testing.T) {
 
 	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
 		"billing_setting.billing_mode":    `{"tiered-overflow-model":"tiered_expr"}`,
-		"billing_setting.billing_expr":    `{"tiered-overflow-model":"tier(\"overflow\", p * 1000000000000000)"}`,
+		"billing_setting.billing_expr":    `{"tiered-overflow-model":"tier(\"overflow\", p * 100000000000000000)"}`,
 		"group_ratio_setting.group_ratio": `{"default":1}`,
 	}))
 
@@ -274,190 +273,41 @@ func TestModelPriceHelperRequestBillingRatiosOnlyApplyToFixedPrice(t *testing.T)
 	require.Nil(t, info.Billing)
 }
 
-func TestModelPriceHelperPerCallDefaultTaskBilling(t *testing.T) {
+func TestModelPriceHelperPerCallPrefersFixedVideoPrice(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	savedModelPrices := ratio_setting.ModelPrice2JSONString()
-	savedModelRatios := ratio_setting.ModelRatio2JSONString()
-	savedMode := operation_setting.GetQuotaSetting().DefaultTaskBillingMode
-	savedPrice := operation_setting.GetQuotaSetting().DefaultTaskPrice
+	savedVideoModelPrices := ratio_setting.VideoModelPrice2JSONString()
 	t.Cleanup(func() {
 		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedModelPrices))
-		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedModelRatios))
-		operation_setting.GetQuotaSetting().DefaultTaskBillingMode = savedMode
-		operation_setting.GetQuotaSetting().DefaultTaskPrice = savedPrice
+		require.NoError(t, ratio_setting.UpdateVideoModelPriceByJSONString(savedVideoModelPrices))
 	})
 
-	// 清除所有模型价格/倍率配置，只留系统默认
-	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString("{}"))
-	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString("{}"))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"video-fixed-price":0.9}`))
+	require.NoError(t, ratio_setting.UpdateVideoModelPriceByJSONString(`{"video-fixed-price":0.25}`))
 
-	newInfo := func(model string) (*gin.Context, *relaycommon.RelayInfo) {
-		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-		ctx.Set("group", "default")
-		return ctx, &relaycommon.RelayInfo{
-			OriginModelName: model,
-			UserGroup:       "default",
-			UsingGroup:      "default",
-		}
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("group", "default")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "video-fixed-price",
+		UserGroup:       "default",
+		UsingGroup:      "default",
 	}
 
-	t.Run("per_call default applies fixed price once", func(t *testing.T) {
-		operation_setting.GetQuotaSetting().DefaultTaskBillingMode = "per_call"
-		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.1
+	priceData, err := ModelPriceHelperPerCall(ctx, info)
 
-		ctx, info := newInfo("unconfigured-model")
-		priceData, err := ModelPriceHelperPerCall(ctx, info)
-
-		require.NoError(t, err)
-		require.True(t, priceData.UsePrice)
-		// 0.1 * 500000 = 50000，固定价不随 seconds 放大
-		require.Equal(t, 50000, priceData.Quota)
-
-		// 模拟 adaptor.EstimateBilling 注入 seconds 倍率
-		priceData.AddOtherRatio("seconds", 5)
-		require.Equal(t, 50000, priceData.Quota)
-	})
-
-	t.Run("per_second default applies ratio times seconds", func(t *testing.T) {
-		operation_setting.GetQuotaSetting().DefaultTaskBillingMode = "per_second"
-		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.04
-
-		ctx, info := newInfo("unconfigured-model")
-		priceData, err := ModelPriceHelperPerCall(ctx, info)
-
-		require.NoError(t, err)
-		require.False(t, priceData.UsePrice)
-		// 基础预扣：0.04 / 2 * 500000 = 10000
-		require.Equal(t, 10000, priceData.Quota)
-
-		// 模拟 relay_task step 6：按量才把 OtherRatios 乘入
-		priceData.AddOtherRatio("seconds", 5)
-		quotaWithRatios := priceData.ApplyOtherRatiosToFloat(float64(priceData.Quota))
-		require.Equal(t, 50000.0, quotaWithRatios)
-	})
-
-	t.Run("default price zero keeps error for unconfigured model", func(t *testing.T) {
-		operation_setting.GetQuotaSetting().DefaultTaskBillingMode = "per_call"
-		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0
-
-		ctx, info := newInfo("unconfigured-model")
-		_, err := ModelPriceHelperPerCall(ctx, info)
-
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "has not been priced")
-	})
+	require.NoError(t, err)
+	require.True(t, priceData.UsePrice)
+	require.True(t, priceData.UseVideoPrice)
+	require.Equal(t, 0.25, priceData.ModelPrice)
+	require.Equal(t, 125000, priceData.Quota)
 }
 
-func TestModelPriceHelperPerCallExplicitMode(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	savedModelPrices := ratio_setting.ModelPrice2JSONString()
-	savedModelRatios := ratio_setting.ModelRatio2JSONString()
-	savedMode := operation_setting.GetQuotaSetting().DefaultTaskBillingMode
-	savedPrice := operation_setting.GetQuotaSetting().DefaultTaskPrice
-	savedTaskMode := billing_setting.GetTaskBillingModeCopy()
+func TestHasModelBillingConfigAcceptsFixedVideoPrice(t *testing.T) {
+	savedVideoModelPrices := ratio_setting.VideoModelPrice2JSONString()
 	t.Cleanup(func() {
-		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedModelPrices))
-		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedModelRatios))
-		operation_setting.GetQuotaSetting().DefaultTaskBillingMode = savedMode
-		operation_setting.GetQuotaSetting().DefaultTaskPrice = savedPrice
-		bs := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
-		bs.TaskBillingMode = savedTaskMode
+		require.NoError(t, ratio_setting.UpdateVideoModelPriceByJSONString(savedVideoModelPrices))
 	})
 
-	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString("{}"))
-	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString("{}"))
-
-	bs := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
-	bs.TaskBillingMode = map[string]string{
-		"model-per-call":   billing_setting.TaskBillingModePerCall,
-		"model-per-second": billing_setting.TaskBillingModePerSecond,
-	}
-
-	newInfo := func(model string) (*gin.Context, *relaycommon.RelayInfo) {
-		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-		ctx.Set("group", "default")
-		return ctx, &relaycommon.RelayInfo{
-			OriginModelName: model,
-			UserGroup:       "default",
-			UsingGroup:      "default",
-		}
-	}
-
-	t.Run("per_call with model price uses model price", func(t *testing.T) {
-		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"model-per-call": 0.2}`))
-		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.1
-
-		ctx, info := newInfo("model-per-call")
-		priceData, err := ModelPriceHelperPerCall(ctx, info)
-
-		require.NoError(t, err)
-		require.True(t, priceData.UsePrice)
-		require.Equal(t, 100000, priceData.Quota) // 0.2 * 500000
-	})
-
-	t.Run("per_call without model price falls back to system default", func(t *testing.T) {
-		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
-		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.1
-
-		ctx, info := newInfo("model-per-call")
-		priceData, err := ModelPriceHelperPerCall(ctx, info)
-
-		require.NoError(t, err)
-		require.True(t, priceData.UsePrice)
-		require.Equal(t, 50000, priceData.Quota) // 0.1 * 500000
-	})
-
-	t.Run("per_call falls back to built-in default model price", func(t *testing.T) {
-		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
-		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.5
-		bs.TaskBillingMode = map[string]string{
-			"sora-2": billing_setting.TaskBillingModePerCall,
-		}
-
-		ctx, info := newInfo("sora-2")
-		priceData, err := ModelPriceHelperPerCall(ctx, info)
-
-		require.NoError(t, err)
-		require.True(t, priceData.UsePrice)
-		require.Equal(t, 150000, priceData.Quota) // 内置默认价 0.3 * 500000，优先于系统默认 0.5
-	})
-
-	t.Run("per_second with model ratio uses model ratio", func(t *testing.T) {
-		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"model-per-second": 0.04}`))
-		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.08
-
-		ctx, info := newInfo("model-per-second")
-		priceData, err := ModelPriceHelperPerCall(ctx, info)
-
-		require.NoError(t, err)
-		require.False(t, priceData.UsePrice)
-		require.Equal(t, 10000, priceData.Quota) // 0.04 / 2 * 500000 预扣一半
-	})
-
-	t.Run("per_second without model ratio uses system default not 37.5", func(t *testing.T) {
-		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
-		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.08
-
-		ctx, info := newInfo("model-per-second")
-		priceData, err := ModelPriceHelperPerCall(ctx, info)
-
-		require.NoError(t, err)
-		require.False(t, priceData.UsePrice)
-		// 回落系统默认价 0.08，而不是 GetModelRatio 的 37.5 兜底
-		require.Equal(t, 20000, priceData.Quota) // 0.08 / 2 * 500000
-	})
-
-	t.Run("unconfigured mode keeps legacy fallback", func(t *testing.T) {
-		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
-		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
-		operation_setting.GetQuotaSetting().DefaultTaskBillingMode = "per_second"
-		operation_setting.GetQuotaSetting().DefaultTaskPrice = 0.04
-
-		ctx, info := newInfo("no-mode-model")
-		priceData, err := ModelPriceHelperPerCall(ctx, info)
-
-		require.NoError(t, err)
-		require.False(t, priceData.UsePrice)
-		require.Equal(t, 10000, priceData.Quota) // 系统默认 per_second 0.04 / 2 * 500000
-	})
+	require.NoError(t, ratio_setting.UpdateVideoModelPriceByJSONString(`{"video-only-price":0.25}`))
+	require.True(t, HasModelBillingConfig("video-only-price"))
 }

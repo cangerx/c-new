@@ -21,7 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { StatusBadge, type StatusVariant } from '@/components/status-badge'
 
 import { isDynamicPricingModel } from '../lib/dynamic-price'
-import { isPerSecondModel, isTokenBasedModel } from '../lib/model-helpers'
+import { isTokenBasedModel, isVideoPerRequestModel } from '../lib/model-helpers'
 import type { PricingModel } from '../types'
 
 interface ModelBillingModeBadgeProps {
@@ -37,10 +37,9 @@ export function ModelBillingModeBadge(props: ModelBillingModeBadgeProps) {
   if (isDynamicPricingModel(props.model)) {
     label = t('Dynamic Pricing')
     variant = 'warning'
-  } else if (isPerSecondModel(props.model)) {
-    // 复用管理端已有的 'Per second' key，7 个语言均已翻译，避免近重复 key
-    label = t('Per second')
-    variant = 'success'
+  } else if (isVideoPerRequestModel(props.model)) {
+    label = t('Video per-request')
+    variant = 'info'
   } else if (isTokenBasedModel(props.model)) {
     label = t('Token-based')
     variant = 'info'

@@ -1,5 +1,22 @@
-import type { ModelSectionConfig } from '../components/model-section'
+/*
+Copyright (C) 2023-2026 QuantumNous
 
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import type { ModelSectionConfig } from '../components/model-section'
 import { domesticModels, imageModels, videoModels } from './models'
 
 export const modelSections: ModelSectionConfig[] = [
@@ -9,8 +26,7 @@ export const modelSections: ModelSectionConfig[] = [
     heading: '国产旗舰大语言模型矩阵',
     subheading:
       '聚合国内最强推理与长文本模型，全链路高速调度，提供稳定可靠的底层支撑体系。',
-    bannerClass:
-      'bg-gradient-to-br from-blue-950 via-slate-900 to-indigo-950',
+    bannerClass: 'bg-gradient-to-br from-blue-950 via-slate-900 to-indigo-950',
     bannerMutedClass: 'text-blue-100/70',
     showHatch: true,
     highlights: [
@@ -47,8 +63,7 @@ export const modelSections: ModelSectionConfig[] = [
     id: 'image-models',
     pill: '图像大模型',
     heading: '高保真艺术与写实图像生成',
-    subheading:
-      '丰富的提示词控制，满足全场景艺术创作与专业级商业视觉设计。',
+    subheading: '丰富的提示词控制，满足全场景艺术创作与专业级商业视觉设计。',
     bannerClass:
       'bg-gradient-to-br from-fuchsia-950 via-zinc-900 to-purple-950',
     bannerMutedClass: 'text-purple-100/70',

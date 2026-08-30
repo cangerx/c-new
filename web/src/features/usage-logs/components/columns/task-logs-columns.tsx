@@ -17,79 +17,27 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
-import { Eye, Music } from 'lucide-react'
+import { Eye } from 'lucide-react'
 /* eslint-disable react-refresh/only-export-components */
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { TASK_ACTIONS, TASK_STATUS } from '../../constants'
 import { taskActionMapper, taskStatusMapper } from '../../lib/mappers'
 import type { TaskLog } from '../../types'
-import {
-  AudioPreviewDialog,
-  type AudioClip,
-} from '../dialogs/audio-preview-dialog'
-import { FailReasonDialog } from '../dialogs/fail-reason-dialog'
-import { TaskLogDetailsDialog } from '../dialogs/task-log-details-dialog'
+import { TaskDetailsDialog } from '../dialogs/task-details-dialog'
 import { useUsageLogsContext } from '../usage-logs-provider'
 import {
   createDurationColumn,
   createChannelColumn,
   createProgressColumn,
 } from './column-helpers'
-
-function parseTaskData(data: unknown): unknown[] {
-  if (Array.isArray(data)) return data
-  if (typeof data === 'string') {
-    try {
-      const parsed = JSON.parse(data)
-      return Array.isArray(parsed) ? parsed : []
-    } catch {
-      return []
-    }
-  }
-  return []
-}
-
-function AudioPreviewCell({ log }: { log: TaskLog }) {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-  const clips = useMemo(() => {
-    const data = parseTaskData(log.data)
-    return data.filter(
-      (c) =>
-        c && typeof c === 'object' && (c as Record<string, unknown>).audio_url
-    )
-  }, [log.data])
-
-  if (clips.length === 0) return null
-
-  return (
-    <>
-      <button
-        type='button'
-        className='group flex items-center gap-1 text-left text-xs'
-        onClick={() => setOpen(true)}
-      >
-        <Music className='text-muted-foreground size-3' />
-        <span className='text-foreground leading-snug group-hover:underline'>
-          {t('Click to preview audio')}
-        </span>
-      </button>
-      <AudioPreviewDialog
-        open={open}
-        onOpenChange={setOpen}
-        clips={clips as AudioClip[]}
-      />
-    </>
-  )
-}
 
 export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
   const { t } = useTranslation()
@@ -219,108 +167,27 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
       header: t('Details'),
       cell: function DetailsCell({ row }) {
         const log = row.original
-        const failReason = row.getValue('fail_reason') as string
-        const status = log.status
         const [dialogOpen, setDialogOpen] = useState(false)
-        const [detailsOpen, setDetailsOpen] = useState(false)
-
-        const isSunoSuccess =
-          log.platform === 'suno' && status === TASK_STATUS.SUCCESS
-        if (isSunoSuccess) {
-          const data = parseTaskData(log.data)
-          if (
-            data.some(
-              (c) =>
-                c &&
-                typeof c === 'object' &&
-                (c as Record<string, unknown>).audio_url
-            )
-          ) {
-            return (
-              <div className='flex items-center gap-2'>
-                <AudioPreviewCell log={log} />
-                <button
-                  type='button'
-                  className='flex items-center gap-1 text-xs text-blue-600 hover:underline dark:text-blue-400'
-                  onClick={() => setDetailsOpen(true)}
-                  title={t('Click to view full details')}
-                >
-                  <Eye className='size-3' />
-                  {t('View details')}
-                </button>
-                <TaskLogDetailsDialog
-                  log={log}
-                  open={detailsOpen}
-                  onOpenChange={setDetailsOpen}
-                />
-              </div>
-            )
-          }
-        }
-
-        const isVideoTask =
-          log.action === TASK_ACTIONS.GENERATE ||
-          log.action === TASK_ACTIONS.TEXT_GENERATE ||
-          log.action === TASK_ACTIONS.FIRST_TAIL_GENERATE ||
-          log.action === TASK_ACTIONS.REFERENCE_GENERATE ||
-          log.action === TASK_ACTIONS.REMIX_GENERATE
-        const isSuccess = status === TASK_STATUS.SUCCESS
-        const isUrl = failReason?.startsWith('http')
-
-        const previewBlock = (() => {
-          if (isSuccess && isVideoTask && isUrl) {
-            const videoUrl = `/v1/videos/${log.task_id}/content`
-            return (
-              <a
-                href={videoUrl}
-                target='_blank'
-                rel='noopener noreferrer'
-                className='text-foreground text-xs hover:underline'
-              >
-                {t('Click to preview video')}
-              </a>
-            )
-          }
-          if (failReason) {
-            return (
-              <button
-                type='button'
-                className='group flex max-w-[200px] items-center gap-1 text-left text-xs'
-                onClick={() => setDialogOpen(true)}
-                title={t('Click to view full error message')}
-              >
-                <span className='truncate leading-snug text-red-600 group-hover:underline dark:text-red-400'>
-                  {failReason}
-                </span>
-              </button>
-            )
-          }
-          return <span className='text-muted-foreground/60 text-xs'>-</span>
-        })()
 
         return (
-          <div className='flex items-center gap-2'>
-            {previewBlock}
-            <button
+          <>
+            <Button
               type='button'
-              className='flex items-center gap-1 text-xs text-blue-600 hover:underline dark:text-blue-400'
-              onClick={() => setDetailsOpen(true)}
-              title={t('Click to view full details')}
+              variant='ghost'
+              size='sm'
+              className='h-7 gap-1.5 px-2 text-xs'
+              onClick={() => setDialogOpen(true)}
             >
-              <Eye className='size-3' />
+              <Eye className='size-3.5' />
               {t('View details')}
-            </button>
-            <FailReasonDialog
-              failReason={failReason || ''}
+            </Button>
+            <TaskDetailsDialog
+              log={log}
+              isAdmin={isAdmin}
               open={dialogOpen}
               onOpenChange={setDialogOpen}
             />
-            <TaskLogDetailsDialog
-              log={log}
-              open={detailsOpen}
-              onOpenChange={setDetailsOpen}
-            />
-          </div>
+          </>
         )
       },
       size: 200,

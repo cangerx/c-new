@@ -185,23 +185,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	info.PriceData = priceData
 
-	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
-	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
-	//    ResolveOriginTask 可能已在 remix 路径中预设了 OtherRatios，此处合并。
-	if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
-		for k, v := range estimatedRatios {
-			info.PriceData.AddOtherRatio(k, v)
-		}
-	}
-
-	// 6. 将 OtherRatios 应用到基础额度（饱和转换，防止溢出成负数）。
-	//    按次计费（UsePrice）时价格为固定值，不得再乘时长/尺寸等 OtherRatios。
-	if !info.PriceData.UsePrice &&
-		!common.StringsContains(constant.TaskPricePatches, modelName) {
-		quotaWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.Quota))
-		quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
-		info.PriceData.Quota = quota
-		noteTaskQuotaClamp(info, clamp)
+	// 5-6. 视频固定按次价不叠加时长、分辨率等动态倍率；原有价格模式保持原行为。
+	if !info.PriceData.UseVideoPrice {
+		applyEstimatedTaskBillingRatios(info, modelName, adaptor.EstimateBilling(c, info))
 	}
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
@@ -244,7 +230,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
 	finalQuota := info.PriceData.Quota
-	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
+	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); !info.PriceData.UseVideoPrice && len(adjustedRatios) > 0 {
 		if adjustedQuota, ok := recalcQuotaFromRatios(info, adjustedRatios); ok {
 			// 基于调整后的 ratios 重新计算 quota
 			finalQuota = adjustedQuota
@@ -259,6 +245,24 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Platform:       platform,
 		Quota:          finalQuota,
 	}, nil
+}
+
+func applyEstimatedTaskBillingRatios(info *relaycommon.RelayInfo, modelName string, ratios map[string]float64) {
+	if info.PriceData.UseVideoPrice {
+		return
+	}
+
+	for key, ratio := range ratios {
+		info.PriceData.AddOtherRatio(key, ratio)
+	}
+	if common.StringsContains(constant.TaskPricePatches, modelName) {
+		return
+	}
+
+	quotaWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.Quota))
+	quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
+	info.PriceData.Quota = quota
+	noteTaskQuotaClamp(info, clamp)
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。

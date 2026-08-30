@@ -26,6 +26,7 @@ export const createModelPricingSchema = (t: (key: string) => string) =>
   z.object({
     name: z.string().min(1, t('Model name is required')),
     price: z.string().optional(),
+    videoPrice: z.string().optional(),
     ratio: z.string().optional(),
     cacheRatio: z.string().optional(),
     createCacheRatio: z.string().optional(),
@@ -39,7 +40,11 @@ export type ModelPricingFormValues = z.infer<
   ReturnType<typeof createModelPricingSchema>
 >
 
-export type PricingMode = 'per-token' | 'per-request' | 'tiered_expr'
+export type PricingMode =
+  | 'per-token'
+  | 'per-request'
+  | 'video-per-request'
+  | 'tiered_expr'
 
 export type LaneKey =
   | 'completion'
@@ -52,6 +57,7 @@ export type LaneKey =
 export type ModelRatioData = {
   name: string
   price?: string
+  videoPrice?: string
   ratio?: string
   cacheRatio?: string
   createCacheRatio?: string
@@ -62,11 +68,6 @@ export type ModelRatioData = {
   billingMode?: PricingMode
   billingExpr?: string
   requestRuleExpr?: string
-  // 任务/视频模型的显式计费模式："per_call" | "per_second" | ""（空=用系统默认）
-  taskBillingMode?: string
-  // 按秒计费的每秒价格。后端从 ModelRatio 读取，与按次价格（ModelPrice）互斥，
-  // 且不能复用 ratio 字段——那是 per-token 的输入倍率。
-  taskSecondPrice?: string
 }
 
 export type PreviewRow = {
@@ -241,6 +242,16 @@ export function buildPreviewRows(
         key: 'price',
         label: 'ModelPrice',
         value: values.price || t('Empty'),
+      },
+    ]
+  }
+
+  if (mode === 'video-per-request') {
+    return [
+      {
+        key: 'videoPrice',
+        label: 'VideoModelPrice',
+        value: values.videoPrice || t('Empty'),
       },
     ]
   }

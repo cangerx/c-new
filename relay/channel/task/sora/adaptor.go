@@ -38,19 +38,43 @@ type ImageURL struct {
 	URL string `json:"url"`
 }
 
+type taskProgress int
+
+func (p *taskProgress) UnmarshalJSON(data []byte) error {
+	raw := strings.TrimSpace(string(data))
+	if raw == "" || raw == "null" {
+		*p = 0
+		return nil
+	}
+
+	raw = strings.Trim(raw, `"`)
+	raw = strings.TrimSpace(strings.TrimSuffix(raw, "%"))
+	if raw == "" {
+		*p = 0
+		return nil
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return fmt.Errorf("invalid task progress %q: %w", raw, err)
+	}
+	*p = taskProgress(value)
+	return nil
+}
+
 type responseTask struct {
-	ID                 string `json:"id"`
-	TaskID             string `json:"task_id,omitempty"` //兼容旧接口
-	Object             string `json:"object"`
-	Model              string `json:"model"`
-	Status             string `json:"status"`
-	Progress           int    `json:"progress"`
-	CreatedAt          int64  `json:"created_at"`
-	CompletedAt        int64  `json:"completed_at,omitempty"`
-	ExpiresAt          int64  `json:"expires_at,omitempty"`
-	Seconds            string `json:"seconds,omitempty"`
-	Size               string `json:"size,omitempty"`
-	RemixedFromVideoID string `json:"remixed_from_video_id,omitempty"`
+	ID                 string       `json:"id"`
+	TaskID             string       `json:"task_id,omitempty"` //兼容旧接口
+	Object             string       `json:"object"`
+	Model              string       `json:"model"`
+	Status             string       `json:"status"`
+	Progress           taskProgress `json:"progress"`
+	CreatedAt          int64        `json:"created_at"`
+	CompletedAt        int64        `json:"completed_at,omitempty"`
+	ExpiresAt          int64        `json:"expires_at,omitempty"`
+	Seconds            string       `json:"seconds,omitempty"`
+	Size               string       `json:"size,omitempty"`
+	RemixedFromVideoID string       `json:"remixed_from_video_id,omitempty"`
 	Error              *struct {
 		Message string `json:"message"`
 		Code    string `json:"code"`
@@ -216,7 +240,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return &buf, nil
 	}
 
-	return common.ReaderOnly(storage), nil
+	return common.NewReplayableBodyReader(storage), nil
 }
 
 // DoRequest delegates to common helper.
@@ -302,7 +326,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusQueued
 	case "processing", "in_progress":
 		taskResult.Status = model.TaskStatusInProgress
-	case "completed":
+	case "completed", "succeeded":
 		taskResult.Status = model.TaskStatusSuccess
 		// Url intentionally left empty — the caller constructs the proxy URL using the public task ID
 	case "failed", "cancelled":

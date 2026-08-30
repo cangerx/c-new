@@ -322,6 +322,7 @@ var defaultAudioCompletionRatio = map[string]float64{
 }
 
 var modelPriceMap = types.NewRWMap[string, float64]()
+var videoModelPriceMap = types.NewRWMap[string, float64]()
 var modelRatioMap = types.NewRWMap[string, float64]()
 var completionRatioMap = types.NewRWMap[string, float64]()
 
@@ -356,22 +357,33 @@ func UpdateModelPriceByJSONString(jsonStr string) error {
 	return types.LoadFromJsonStringWithCallback(modelPriceMap, jsonStr, InvalidateExposedDataCache)
 }
 
+func VideoModelPrice2JSONString() string {
+	return videoModelPriceMap.MarshalJSONString()
+}
+
+func UpdateVideoModelPriceByJSONString(jsonStr string) error {
+	return types.LoadFromJsonStringWithCallback(videoModelPriceMap, jsonStr, InvalidateExposedDataCache)
+}
+
+// GetVideoModelPrice returns the fixed USD price for one video task.
+func GetVideoModelPrice(name string, printErr bool) (float64, bool) {
+	name = FormatMatchingModelName(name)
+
+	if price, ok := videoModelPriceMap.Get(name); ok {
+		return price, true
+	}
+
+	if printErr {
+		common.SysError("video model price not found: " + name)
+	}
+	return -1, false
+}
+
 // GetModelPrice 返回模型的价格，如果模型不存在则返回-1，false
 func GetModelPrice(name string, printErr bool) (float64, bool) {
 	name = FormatMatchingModelName(name)
 
 	if price, ok := modelPriceMap.Get(name); ok {
-		return price, true
-	}
-
-	if strings.HasSuffix(name, CompactModelSuffix) {
-		price, ok := modelPriceMap.Get(CompactWildcardModelKey)
-		if !ok {
-			if printErr {
-				common.SysError("model price not found: " + name)
-			}
-			return -1, false
-		}
 		return price, true
 	}
 
@@ -398,27 +410,9 @@ func GetModelRatio(name string) (float64, bool, string) {
 
 	ratio, ok := modelRatioMap.Get(name)
 	if !ok {
-		if strings.HasSuffix(name, CompactModelSuffix) {
-			if wildcardRatio, ok := modelRatioMap.Get(CompactWildcardModelKey); ok {
-				return wildcardRatio, true, name
-			}
-			//return 0, true, name
-		}
 		return 37.5, operation_setting.SelfUseModeEnabled, name
 	}
 	return ratio, true, name
-}
-
-// GetModelTaskRatio 精确查询模型倍率（含通配模型回退），不进行自用模式 37.5 兜底。
-// 用于任务/视频模型按秒计费，避免未配置时误用 token 倍率兜底值。
-func GetModelTaskRatio(name string) (float64, bool) {
-	name = FormatMatchingModelName(name)
-
-	ratio, ok := modelRatioMap.Get(name)
-	if !ok && strings.HasSuffix(name, CompactModelSuffix) {
-		ratio, ok = modelRatioMap.Get(CompactWildcardModelKey)
-	}
-	return ratio, ok
 }
 
 func DefaultModelRatio2JSONString() string {
@@ -709,6 +703,10 @@ func GetModelRatioCopy() map[string]float64 {
 
 func GetModelPriceCopy() map[string]float64 {
 	return modelPriceMap.ReadAll()
+}
+
+func GetVideoModelPriceCopy() map[string]float64 {
+	return videoModelPriceMap.ReadAll()
 }
 
 func GetCompletionRatioCopy() map[string]float64 {

@@ -24,8 +24,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
-	"github.com/QuantumNous/new-api/pkg/plugin"
-	_ "github.com/QuantumNous/new-api/plugins"
 	"github.com/QuantumNous/new-api/relay"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/router"
@@ -201,10 +199,6 @@ func main() {
 		BuildFS:   buildFS,
 		IndexPage: indexPage,
 	})
-
-	// Register plugin routes — must run after all built-in routes are set up.
-	plugin.RegisterAllRoutes(server)
-
 	var port = os.Getenv("PORT")
 	if port == "" {
 		port = strconv.Itoa(*common.Port)
@@ -369,12 +363,6 @@ func InitResources() error {
 	}
 
 	service.StartAuthArtifactCleanup()
-
-	// Initialize plugins — must run after all core resources (DB, Redis, etc.) are ready.
-	if err := plugin.InitAll(); err != nil {
-		common.FatalLog("failed to initialize plugins: " + err.Error())
-		return err
-	}
 
 	return nil
 }

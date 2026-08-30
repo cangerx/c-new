@@ -49,6 +49,7 @@ import {
 
 type ModelFormValues = {
   ModelPrice: string
+  VideoModelPrice: string
   ModelRatio: string
   CacheRatio: string
   CreateCacheRatio: string
@@ -59,7 +60,6 @@ type ModelFormValues = {
   ExposeRatioEnabled: boolean
   BillingMode: string
   BillingExpr: string
-  TaskBillingMode: string
 }
 
 type ModelRatioFormProps = {
@@ -74,6 +74,7 @@ type ModelRatioFormProps = {
 
 type ModelJsonFieldName =
   | 'ModelPrice'
+  | 'VideoModelPrice'
   | 'ModelRatio'
   | 'CacheRatio'
   | 'CreateCacheRatio'
@@ -92,6 +93,12 @@ const modelJsonFields: Array<{
     labelKey: 'Model fixed pricing',
     descriptionKey:
       'JSON map of model → USD cost per request. Takes precedence over ratio based billing.',
+  },
+  {
+    name: 'VideoModelPrice',
+    labelKey: 'Video fixed pricing',
+    descriptionKey:
+      'JSON map of video model → USD cost per video request. Duration and resolution multipliers are not applied.',
   },
   {
     name: 'ModelRatio',
@@ -267,6 +274,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
             <ModelRatioVisualEditor
               ref={visualEditorRef}
               savedModelPrice={savedValues.ModelPrice}
+              savedVideoModelPrice={savedValues.VideoModelPrice}
               savedModelRatio={savedValues.ModelRatio}
               savedCacheRatio={savedValues.CacheRatio}
               savedCreateCacheRatio={savedValues.CreateCacheRatio}
@@ -276,8 +284,8 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               savedAudioCompletionRatio={savedValues.AudioCompletionRatio}
               savedBillingMode={savedValues.BillingMode}
               savedBillingExpr={savedValues.BillingExpr}
-              savedTaskBillingMode={savedValues.TaskBillingMode}
               modelPrice={form.watch('ModelPrice')}
+              videoModelPrice={form.watch('VideoModelPrice')}
               modelRatio={form.watch('ModelRatio')}
               cacheRatio={form.watch('CacheRatio')}
               createCacheRatio={form.watch('CreateCacheRatio')}
@@ -287,7 +295,6 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               audioCompletionRatio={form.watch('AudioCompletionRatio')}
               billingMode={form.watch('BillingMode')}
               billingExpr={form.watch('BillingExpr')}
-              taskBillingMode={form.watch('TaskBillingMode')}
               candidateModelNames={
                 isUnsetVariant ? enabledModelsQuery.data?.data : undefined
               }
@@ -301,7 +308,6 @@ export const ModelRatioForm = memo(function ModelRatioForm({
                 const fieldMap: Record<string, keyof ModelFormValues> = {
                   'billing_setting.billing_mode': 'BillingMode',
                   'billing_setting.billing_expr': 'BillingExpr',
-                  'billing_setting.task_billing_mode': 'TaskBillingMode',
                 }
                 const formField =
                   fieldMap[field] || (field as keyof ModelFormValues)

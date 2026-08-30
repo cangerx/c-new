@@ -207,6 +207,7 @@ export type ModelSettings = {
   'grok.violation_deduction_enabled': boolean
   'grok.violation_deduction_amount': number
   ModelPrice: string
+  VideoModelPrice: string
   ModelRatio: string
   CacheRatio: string
   CreateCacheRatio: string
@@ -217,7 +218,6 @@ export type ModelSettings = {
   ExposeRatioEnabled: boolean
   'billing_setting.billing_mode': string
   'billing_setting.billing_expr': string
-  'billing_setting.task_billing_mode': string
   'tool_price_setting.prices': string
   TopupGroupRatio: string
   GroupRatio: string
@@ -236,7 +236,11 @@ export type ModelSettings = {
   AutomaticRetryStatusCodes: string
   'monitor_setting.auto_test_channel_enabled': boolean
   'monitor_setting.auto_test_channel_minutes': number
-  'monitor_setting.channel_test_mode': 'scheduled_all' | 'passive_recovery'
+  'monitor_setting.channel_test_concurrency': number
+  'monitor_setting.channel_test_mode':
+    | 'scheduled_all'
+    | 'auto_ban_only'
+    | 'passive_recovery'
   'channel_affinity_setting.enabled': boolean
   'channel_affinity_setting.switch_on_success': boolean
   'channel_affinity_setting.keep_on_channel_disabled': boolean
@@ -255,8 +259,6 @@ export type BillingSettings = {
   TopUpLink: string
   'general_setting.docs_link': string
   'quota_setting.enable_free_model_pre_consume': boolean
-  'quota_setting.default_task_billing_mode': 'per_call' | 'per_second'
-  'quota_setting.default_task_price': number
   QuotaPerUnit: number
   USDExchangeRate: number
   'general_setting.quota_display_type': string
@@ -265,6 +267,7 @@ export type BillingSettings = {
   DisplayInCurrencyEnabled: boolean
   DisplayTokenStatEnabled: boolean
   ModelPrice: string
+  VideoModelPrice: string
   ModelRatio: string
   CacheRatio: string
   CreateCacheRatio: string
@@ -275,7 +278,6 @@ export type BillingSettings = {
   ExposeRatioEnabled: boolean
   'billing_setting.billing_mode': string
   'billing_setting.billing_expr': string
-  'billing_setting.task_billing_mode': string
   'tool_price_setting.prices': string
   TopupGroupRatio: string
   GroupRatio: string

@@ -69,14 +69,10 @@ import {
 import { parseTags } from '../lib/filters'
 import {
   getAvailableGroups,
-  isPerSecondModel,
   isTokenBasedModel,
+  isVideoPerRequestModel,
 } from '../lib/model-helpers'
-import {
-  formatFixedPrice,
-  formatGroupPrice,
-  formatPerSecondGroupPrice,
-} from '../lib/price'
+import { formatFixedPrice, formatGroupPrice } from '../lib/price'
 import type {
   ModelCapability,
   PriceType,
@@ -583,6 +579,7 @@ function PriceSection(props: {
 }) {
   const { t } = useTranslation()
   const isTokenBased = isTokenBasedModel(props.model)
+  const isVideoPerRequest = isVideoPerRequestModel(props.model)
   const tokenUnitLabel = props.tokenUnit === 'K' ? '1K' : '1M'
   const baseGroupKey = '_base'
   const baseGroupRatioMap = { [baseGroupKey]: 1 }
@@ -711,32 +708,22 @@ function PriceSection(props: {
   }
 
   if (!isTokenBased) {
-    const perSecond = isPerSecondModel(props.model)
     return (
       <section>
         <SectionTitle>{t('Base Price')}</SectionTitle>
         <div className='flex items-baseline justify-between'>
           <span className='text-muted-foreground text-sm'>
-            {perSecond ? t('Per second') : t('Per request')}
+            {t(isVideoPerRequest ? 'Fixed video request price' : 'Per request')}
           </span>
           <span className='text-foreground font-mono text-sm font-semibold tabular-nums'>
-            {perSecond
-              ? formatPerSecondGroupPrice(
-                  props.model,
-                  baseGroupKey,
-                  props.showRechargePrice,
-                  props.priceRate,
-                  props.usdExchangeRate,
-                  baseGroupRatioMap
-                )
-              : formatFixedPrice(
-                  props.model,
-                  baseGroupKey,
-                  props.showRechargePrice,
-                  props.priceRate,
-                  props.usdExchangeRate,
-                  baseGroupRatioMap
-                )}
+            {formatFixedPrice(
+              props.model,
+              baseGroupKey,
+              props.showRechargePrice,
+              props.priceRate,
+              props.usdExchangeRate,
+              baseGroupRatioMap
+            )}
           </span>
         </div>
       </section>
@@ -886,6 +873,7 @@ function GroupPricingSection(props: {
   )
 
   const isTokenBased = isTokenBasedModel(props.model)
+  const isVideoPerRequest = isVideoPerRequestModel(props.model)
   const tokenUnitLabel = props.tokenUnit === 'K' ? '1K' : '1M'
 
   const extraPriceTypes = useMemo(() => {
@@ -1050,25 +1038,15 @@ function GroupPricingSection(props: {
       props.usdExchangeRate,
       props.groupRatio
     )
-  // 按秒模型的分组价格读 model_ratio（美元/秒），按次读 model_price。
   const renderFixedGroupPrice = (group: string) =>
-    isPerSecondModel(props.model)
-      ? formatPerSecondGroupPrice(
-          props.model,
-          group,
-          showRechargePrice,
-          props.priceRate,
-          props.usdExchangeRate,
-          props.groupRatio
-        )
-      : formatFixedPrice(
-          props.model,
-          group,
-          showRechargePrice,
-          props.priceRate,
-          props.usdExchangeRate,
-          props.groupRatio
-        )
+    formatFixedPrice(
+      props.model,
+      group,
+      showRechargePrice,
+      props.priceRate,
+      props.usdExchangeRate,
+      props.groupRatio
+    )
 
   return (
     <section>
@@ -1122,7 +1100,7 @@ function GroupPricingSection(props: {
             : [
                 {
                   id: 'price',
-                  header: t('Price'),
+                  header: t(isVideoPerRequest ? 'Video fixed price' : 'Price'),
                   className: `${thClass} text-right`,
                   cellClassName: 'py-2.5 text-right font-mono',
                   cell: renderFixedGroupPrice,
@@ -1134,6 +1112,11 @@ function GroupPricingSection(props: {
         {isTokenBased && (
           <p className='text-muted-foreground/40 mt-1.5 px-4 text-[10px] sm:px-0'>
             {t('Prices shown per')} {tokenUnitLabel} tokens
+          </p>
+        )}
+        {isVideoPerRequest && (
+          <p className='text-muted-foreground/40 mt-1.5 px-4 text-[10px] sm:px-0'>
+            {t('per video request')}
           </p>
         )}
       </div>

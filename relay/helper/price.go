@@ -187,72 +187,31 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hosttypes.PriceData, error) {
 	groupRatioInfo := HandleGroupRatio(c, info)
 
-	var modelPrice float64
-	usePrice := false
+	modelPrice, useVideoPrice := ratio_setting.GetVideoModelPrice(info.OriginModelName, false)
+	var success bool
+	if useVideoPrice {
+		success = true
+	} else {
+		modelPrice, success = ratio_setting.GetModelPrice(info.OriginModelName, true)
+	}
+	usePrice := success
 	var modelRatio float64
 
-	// 模型级显式任务计费模式：per_call（按次）/ per_second（按秒）。
-	// 配置了模式的模型优先按其计费；未配置的模型回退到下方兼容逻辑（ModelPrice→按次、ModelRatio→按倍率、都无→系统默认）。
-	switch billing_setting.GetTaskBillingMode(info.OriginModelName) {
-	case billing_setting.TaskBillingModePerCall:
-		var ok bool
-		modelPrice, ok = ratio_setting.GetModelPrice(info.OriginModelName, false)
-		if !ok {
-			// 模型级未配置按次价格 → 回退内置默认按次价，再回退系统默认任务价格
-			if defaultPrice, ok := ratio_setting.GetDefaultModelPriceMap()[info.OriginModelName]; ok {
-				modelPrice = defaultPrice
-			} else {
-				qs := operation_setting.GetQuotaSetting()
-				if qs.DefaultTaskPrice <= 0 {
-					return hosttypes.PriceData{}, modelPriceNotConfiguredError(info.OriginModelName, info.UserId)
-				}
-				modelPrice = qs.DefaultTaskPrice
+	if !success {
+		defaultPrice, ok := ratio_setting.GetDefaultModelPriceMap()[info.OriginModelName]
+		if ok {
+			modelPrice = defaultPrice
+			usePrice = true
+		} else {
+			var ratioSuccess bool
+			var matchName string
+			modelRatio, ratioSuccess, matchName = ratio_setting.GetModelRatio(info.OriginModelName)
+			acceptUnsetRatio := false
+			if info.UserSetting.AcceptUnsetRatioModel {
+				acceptUnsetRatio = true
 			}
-		}
-		usePrice = true
-	case billing_setting.TaskBillingModePerSecond:
-		var ok bool
-		modelRatio, ok = ratio_setting.GetModelTaskRatio(info.OriginModelName)
-		if !ok {
-			qs := operation_setting.GetQuotaSetting()
-			if qs.DefaultTaskPrice <= 0 {
-				return hosttypes.PriceData{}, modelPriceNotConfiguredError(info.OriginModelName, info.UserId)
-			}
-			modelRatio = qs.DefaultTaskPrice
-		}
-	default:
-		var success bool
-		modelPrice, success = ratio_setting.GetModelPrice(info.OriginModelName, true)
-		usePrice = success
-
-		if !success {
-			defaultPrice, ok := ratio_setting.GetDefaultModelPriceMap()[info.OriginModelName]
-			if ok {
-				modelPrice = defaultPrice
-				usePrice = true
-			} else {
-				var ratioSuccess bool
-				var matchName string
-				modelRatio, ratioSuccess, matchName = ratio_setting.GetModelRatio(info.OriginModelName)
-				acceptUnsetRatio := false
-				if info.UserSetting.AcceptUnsetRatioModel {
-					acceptUnsetRatio = true
-				}
-				if !ratioSuccess && !acceptUnsetRatio {
-					// 模型未配置价格时，回退到系统默认任务计费设置。
-					// 仅当默认价格配置有效（> 0）时兜底，否则保持报错行为。
-					qs := operation_setting.GetQuotaSetting()
-					if qs.DefaultTaskPrice <= 0 {
-						return hosttypes.PriceData{}, modelPriceNotConfiguredError(matchName, info.UserId)
-					}
-					if qs.DefaultTaskBillingMode == "per_call" {
-						modelPrice = qs.DefaultTaskPrice
-						usePrice = true
-					} else {
-						modelRatio = qs.DefaultTaskPrice
-						ratioSuccess = true
-					}
-				}
+			if !ratioSuccess && !acceptUnsetRatio {
+				return hosttypes.PriceData{}, modelPriceNotConfiguredError(matchName, info.UserId)
 			}
 		}
 	}
@@ -293,6 +252,7 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 		ModelPrice:     modelPrice,
 		ModelRatio:     modelRatio,
 		UsePrice:       usePrice,
+		UseVideoPrice:  useVideoPrice,
 		Quota:          quota,
 		GroupRatioInfo: groupRatioInfo,
 	}
@@ -300,6 +260,9 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 }
 
 func HasModelBillingConfig(modelName string) bool {
+	if _, ok := ratio_setting.GetVideoModelPrice(modelName, false); ok {
+		return true
+	}
 	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {
 		return true
 	}

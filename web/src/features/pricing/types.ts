@@ -40,6 +40,8 @@ export type PricingModel = {
   model_ratio: number
   completion_ratio: number
   model_price?: number
+  /** Fixed USD price for one video task. Kept separate from generic request pricing. */
+  video_model_price?: number
   cache_ratio?: number | null
   create_cache_ratio?: number | null
   image_ratio?: number | null
@@ -50,7 +52,7 @@ export type PricingModel = {
   supported_endpoint_types?: string[]
   key?: string
   group_ratio?: Record<string, number>
-  /** Billing mode (e.g. "tiered_expr") used to flag dynamic pricing */
+  /** Billing mode (e.g. "tiered_expr" or "video_per_request") */
   billing_mode?: string
   /** Raw expression describing dynamic / tiered billing */
   billing_expr?: string

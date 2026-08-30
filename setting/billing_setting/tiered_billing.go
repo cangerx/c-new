@@ -13,11 +13,6 @@ const (
 	BillingModeTieredExpr = "tiered_expr"
 	BillingModeField      = "billing_mode"
 	BillingExprField      = "billing_expr"
-
-	// 任务/视频模型的显式计费模式
-	TaskBillingModePerCall   = "per_call"
-	TaskBillingModePerSecond = "per_second"
-	TaskBillingModeField     = "task_billing_mode"
 )
 
 // BillingSetting is managed by config.GlobalConfig.Register.
@@ -25,15 +20,11 @@ const (
 type BillingSetting struct {
 	BillingMode map[string]string `json:"billing_mode"`
 	BillingExpr map[string]string `json:"billing_expr"`
-	// 任务/视频模型显式计费模式：model -> "per_call" | "per_second"
-	// 配置了该模式的模型优先按其计费；未配置的模型回退到系统默认任务计费设置。
-	TaskBillingMode map[string]string `json:"task_billing_mode"`
 }
 
 var billingSetting = BillingSetting{
-	BillingMode:     make(map[string]string),
-	BillingExpr:     make(map[string]string),
-	TaskBillingMode: make(map[string]string),
+	BillingMode: make(map[string]string),
+	BillingExpr: make(map[string]string),
 }
 
 func init() {
@@ -54,16 +45,6 @@ func GetBillingMode(model string) string {
 func GetBillingExpr(model string) (string, bool) {
 	expr, ok := billingSetting.BillingExpr[model]
 	return expr, ok
-}
-
-// GetTaskBillingMode 返回任务/视频模型的显式计费模式（"per_call" | "per_second"），
-// 未配置时返回空字符串，调用方应回退到系统默认任务计费设置。
-func GetTaskBillingMode(model string) string {
-	return billingSetting.TaskBillingMode[model]
-}
-
-func GetTaskBillingModeCopy() map[string]string {
-	return lo.Assign(billingSetting.TaskBillingMode)
 }
 
 func GetBillingModeCopy() map[string]string {

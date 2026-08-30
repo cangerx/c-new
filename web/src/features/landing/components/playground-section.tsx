@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import {
   ArrowRight,
   ChartNoAxesColumn,
@@ -67,7 +85,7 @@ export function PlaygroundSection({ isAuthenticated }: PlaygroundSectionProps) {
             </div>
           </div>
 
-          <div className='reveal-element delay-100 w-full lg:col-span-7'>
+          <div className='reveal-element w-full delay-100 lg:col-span-7'>
             <div className='playground-console flex h-[520px] w-full flex-col overflow-hidden rounded-2xl border border-zinc-200/80 bg-white/70 text-left shadow-2xl backdrop-blur-md dark:border-white/[0.08] dark:bg-[#0b0b0d]/80'>
               <div className='playground-console-header flex h-12 shrink-0 items-center justify-between border-b border-zinc-200/60 bg-zinc-100/50 px-4 select-none dark:border-white/[0.06] dark:bg-[#121215]/50'>
                 <div className='flex w-16 items-center gap-1.5'>
@@ -160,7 +178,7 @@ export function PlaygroundSection({ isAuthenticated }: PlaygroundSectionProps) {
 function PlaygroundChat() {
   return (
     <div className='flex min-w-0 flex-1 flex-col overflow-hidden bg-white/40 dark:bg-[#070709]/20'>
-      <div className='scrollbar-thin flex-1 space-y-4 overflow-y-auto p-4 text-xs font-semibold'>
+      <div className='flex-1 scrollbar-thin space-y-4 overflow-y-auto p-4 text-xs font-semibold'>
         <div className='flex max-w-[85%] items-start gap-2.5'>
           <div className='flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-zinc-200/40 bg-zinc-100 text-[10px] dark:border-white/[0.04] dark:bg-zinc-800'>
             U

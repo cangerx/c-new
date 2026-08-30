@@ -349,6 +349,21 @@ func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
 	return task, exist, err
 }
 
+// GetByTaskIdForAdmin looks up a task without applying an owner filter.
+// Callers must enforce administrator authorization before using this helper.
+func GetByTaskIdForAdmin(taskId string) (*Task, bool, error) {
+	if taskId == "" {
+		return nil, false, nil
+	}
+	var task *Task
+	err := DB.Where("task_id = ?", taskId).First(&task).Error
+	exist, err := RecordExist(err)
+	if err != nil {
+		return nil, false, err
+	}
+	return task, exist, nil
+}
+
 func GetByTaskIds(userId int, taskIds []any) ([]*Task, error) {
 	if len(taskIds) == 0 {
 		return nil, nil

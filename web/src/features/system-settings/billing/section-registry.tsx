@@ -28,6 +28,7 @@ import { createSectionRegistry } from '../utils/section-registry'
 
 const getModelDefaults = (settings: BillingSettings) => ({
   ModelPrice: settings.ModelPrice,
+  VideoModelPrice: settings.VideoModelPrice,
   ModelRatio: settings.ModelRatio,
   CacheRatio: settings.CacheRatio,
   CreateCacheRatio: settings.CreateCacheRatio,
@@ -38,7 +39,6 @@ const getModelDefaults = (settings: BillingSettings) => ({
   ExposeRatioEnabled: settings.ExposeRatioEnabled,
   BillingMode: settings['billing_setting.billing_mode'],
   BillingExpr: settings['billing_setting.billing_expr'],
-  TaskBillingMode: settings['billing_setting.task_billing_mode'],
 })
 
 const getGroupDefaults = (settings: BillingSettings) => ({
@@ -71,9 +71,6 @@ const BILLING_SECTIONS = [
           quota_setting: {
             enable_free_model_pre_consume:
               settings['quota_setting.enable_free_model_pre_consume'],
-            default_task_billing_mode:
-              settings['quota_setting.default_task_billing_mode'],
-            default_task_price: settings['quota_setting.default_task_price'],
           },
         }}
         complianceConfirmed={

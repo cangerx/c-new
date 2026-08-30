@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import { useEffect, useState } from 'react'
 
 /** Nav collapses into a pill once the hero starts scrolling away. */
@@ -21,8 +39,10 @@ export function useIsScrolled(threshold = 80) {
  * exactly: the CSS keys off the class, and elements opt in by carrying
  * `.reveal-element` without needing to know about this hook.
  */
-export function useRevealOnScroll() {
+export function useRevealOnScroll(enabled = true) {
   useEffect(() => {
+    if (!enabled) return
+
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -46,7 +66,7 @@ export function useRevealOnScroll() {
       window.clearTimeout(handle)
       observer.disconnect()
     }
-  }, [])
+  }, [enabled])
 }
 
 function animateCounter(el: HTMLElement, target: number, decimals: number) {
@@ -73,8 +93,10 @@ function animateCounter(el: HTMLElement, target: number, decimals: number) {
  * Counts `.counter-value` numbers up when their `.counter-section` scrolls in.
  * Targets are read from `data-target` / `data-decimals` on each element.
  */
-export function useCounterAnimation() {
+export function useCounterAnimation(enabled = true) {
   useEffect(() => {
+    if (!enabled) return
+
     const cancels: Array<() => void> = []
 
     const observer = new IntersectionObserver(
@@ -107,5 +129,5 @@ export function useCounterAnimation() {
       observer.disconnect()
       cancels.forEach((cancel) => cancel())
     }
-  }, [])
+  }, [enabled])
 }

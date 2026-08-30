@@ -34,9 +34,8 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isPerSecondModel, isTokenBasedModel } from '../lib/model-helpers'
+import { isTokenBasedModel, isVideoPerRequestModel } from '../lib/model-helpers'
 import {
-  formatPerSecondPrice,
   formatPrice,
   formatRequestPrice,
   stripTrailingZeros,
@@ -115,6 +114,7 @@ export function usePricingColumns(
       ),
       cell: ({ row }) => {
         const model = row.original
+        const isVideoPerRequest = isVideoPerRequestModel(model)
         const dynamicSummary = getDynamicPricingSummary(model, {
           tokenUnit,
           showRechargePrice,
@@ -215,29 +215,6 @@ export function usePricingColumns(
           )
         }
 
-        if (isPerSecondModel(model)) {
-          const secondPrice = stripTrailingZeros(
-            formatPerSecondPrice(
-              model,
-              showRechargePrice,
-              priceRate,
-              usdExchangeRate,
-              selectedGroup
-            )
-          )
-
-          return (
-            <div className='max-w-full min-w-0'>
-              <span className='font-mono text-sm tabular-nums'>
-                {secondPrice}
-              </span>
-              <div className='text-muted-foreground/50 text-[10px]'>
-                / {t('second')}
-              </div>
-            </div>
-          )
-        }
-
         const price = stripTrailingZeros(
           formatRequestPrice(
             model,
@@ -252,7 +229,7 @@ export function usePricingColumns(
           <div className='max-w-full min-w-0'>
             <span className='font-mono text-sm tabular-nums'>{price}</span>
             <div className='text-muted-foreground/50 text-[10px]'>
-              / {t('request')}
+              / {t(isVideoPerRequest ? 'video request' : 'request')}
             </div>
           </div>
         )

@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import { ArrowRight } from 'lucide-react'
 
 import type { ModelEntry } from '../lib/models'
@@ -63,7 +81,7 @@ export function ModelSection({ config }: { config: ModelSectionConfig }) {
         </div>
 
         <div
-          className={`model-banner reveal-element delay-100 relative mb-12 flex w-full flex-col justify-between overflow-hidden rounded-2xl p-8 text-white shadow-xl md:p-12 ${config.bannerClass}`}
+          className={`model-banner reveal-element relative mb-12 flex w-full flex-col justify-between overflow-hidden rounded-2xl p-8 text-white shadow-xl delay-100 md:p-12 ${config.bannerClass}`}
         >
           {config.showHatch && (
             <div className='absolute inset-0 bg-[linear-gradient(45deg,transparent_48%,rgba(255,255,255,0.8)_50%,transparent_52%)] bg-[length:40px_40px] opacity-10' />
@@ -115,7 +133,7 @@ export function ModelSection({ config }: { config: ModelSectionConfig }) {
           </div>
         </div>
 
-        <div className='reveal-element delay-100 grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-5'>
+        <div className='reveal-element grid grid-cols-1 gap-6 delay-100 sm:grid-cols-2 md:grid-cols-5'>
           {config.models.map((model, idx) => {
             const Icon = model.icon
             return (
