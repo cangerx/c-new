@@ -29,11 +29,11 @@ func TaskModel2LogDto(task *model.Task) *dto.TaskDto {
 }
 
 func isVideoTaskAction(action string) bool {
-	switch action {
-	case constant.TaskActionGenerate,
-		constant.TaskActionTextGenerate,
-		constant.TaskActionFirstTailGenerate,
-		constant.TaskActionReferenceGenerate,
+	switch constant.NormalizeTaskAction(action) {
+	case constant.TaskActionImageToVideo,
+		constant.TaskActionTextToVideo,
+		constant.TaskActionFirstTailToVideo,
+		constant.TaskActionReferenceToVideo,
 		constant.TaskActionRemix:
 		return true
 	default:

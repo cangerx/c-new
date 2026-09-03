@@ -17,7 +17,38 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { TASK_ACTIONS } from '../constants'
-import type { TaskLog } from '../types'
+import type {
+  TaskLog,
+  TaskPluginInfo,
+  TaskPluginRuntimeInfo,
+} from '../types'
+
+export interface TaskDetailAccess {
+  plugin?: TaskPluginInfo
+  runtime?: TaskPluginRuntimeInfo
+  upstreamTaskId?: string
+  nodeName?: string
+}
+
+/** Resolve elevated task metadata without exposing it to ordinary users. */
+export function resolveTaskDetailAccess(
+  log: TaskLog,
+  isAdmin: boolean,
+  isRoot: boolean
+): TaskDetailAccess {
+  const access: TaskDetailAccess = {}
+  if (isAdmin && log.admin_info?.task_plugin) {
+    access.plugin = log.admin_info.task_plugin
+  }
+  if (isRoot && log.root_info) {
+    if (log.root_info.task_plugin) access.runtime = log.root_info.task_plugin
+    if (log.root_info.upstream_task_id) {
+      access.upstreamTaskId = log.root_info.upstream_task_id
+    }
+    if (log.root_info.node_name) access.nodeName = log.root_info.node_name
+  }
+  return access
+}
 
 type UnknownRecord = Record<string, unknown>
 

@@ -45,6 +45,7 @@ import type { TaskLog } from '../../types'
 type TaskDetailsDialogProps = {
   log: TaskLog
   isAdmin: boolean
+  isRoot?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
 }

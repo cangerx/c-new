@@ -13,7 +13,7 @@ import (
 func TestTaskModel2LogDtoHidesUpstreamLocations(t *testing.T) {
 	task := &model.Task{
 		TaskID:     "task_public",
-		Action:     constant.TaskActionTextGenerate,
+		Action:     constant.TaskActionTextToVideo,
 		Status:     model.TaskStatusSuccess,
 		FailReason: "legacy result https://origin.example.com/video.mp4",
 		Properties: model.Properties{Input: `{"prompt":"keep request data","image":"https://user.example.com/input.png"}`},
@@ -36,7 +36,7 @@ func TestTaskModel2LogDtoHidesUpstreamLocations(t *testing.T) {
 func TestTaskModel2LogDtoPreservesNonURLResponseFields(t *testing.T) {
 	task := &model.Task{
 		TaskID: "task_public",
-		Action: constant.TaskActionTextGenerate,
+		Action: constant.TaskActionTextToVideo,
 		Status: model.TaskStatusSuccess,
 		Data:   json.RawMessage(`{"model":"video-model","duration":10,"nested":{"status":"ready"}}`),
 	}
