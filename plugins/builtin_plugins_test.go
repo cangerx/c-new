@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"encoding/json"
 	"io/fs"
 	"testing"
 
@@ -8,6 +9,28 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSoraPluginAcceptsSucceededStatus(t *testing.T) {
+	source, err := Source("sora")
+	require.NoError(t, err)
+	plugin, err := jsplugin.CompilePlugin(source, jsplugin.Options{})
+	require.NoError(t, err)
+
+	value, err := plugin.Engine.Call(t.Context(), "parseTaskResult", map[string]any{}, map[string]any{
+		"status":   "succeeded",
+		"progress": "100%",
+		"data": map[string]any{
+			"status": "completed",
+		},
+	})
+	require.NoError(t, err)
+	encoded, err := json.Marshal(value)
+	require.NoError(t, err)
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &result))
+	assert.Equal(t, "SUCCESS", result["status"])
+	assert.Equal(t, "100%", result["progress"])
+}
 
 func TestBuiltInVendorPluginsDeclareNativeRoutesAndLegacyChannelTypes(t *testing.T) {
 	generation := jsplugin.DefaultRegistry.Generation()
