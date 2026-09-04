@@ -89,6 +89,12 @@ func TestSoraDurationUsesNativeOrVendorWireFormat(t *testing.T) {
 	vendor := decode(t, "seedance-2-5-1080p", map[string]any{"prompt": "vendor", "seconds": 10})
 	assert.Equal(t, float64(10), vendor["duration"])
 	assert.NotContains(t, vendor, "seconds")
+
+	for _, model := range []string{"grok-imagine-video-1.5-preview", "minimax-h3-f", "seedance2.5-720p", "vendor-video"} {
+		preserved := decode(t, model, map[string]any{"prompt": "vendor", "seconds": 6})
+		assert.Equal(t, float64(6), preserved["seconds"], model)
+		assert.NotContains(t, preserved, "duration", model)
+	}
 }
 
 func TestSoraResponsesPreservesVideoExtensions(t *testing.T) {
@@ -139,8 +145,8 @@ func TestSoraMultipartKeepsInputReferenceFile(t *testing.T) {
 	require.NoError(t, err)
 	resolved := decodeSoraPluginMap(t, value)
 	body := resolved["requestBody"].(map[string]any)
-	assert.Equal(t, float64(5), body["duration"])
-	assert.NotContains(t, body, "seconds")
+	assert.Equal(t, float64(5), body["seconds"])
+	assert.NotContains(t, body, "duration")
 
 	submitValue, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
 		"baseUrl":       "https://provider.example",

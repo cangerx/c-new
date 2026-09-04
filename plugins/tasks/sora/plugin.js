@@ -7,7 +7,7 @@ export const meta = {
     en: "OpenAI Sora video generation (text-to-video, image-to-video, and remix)",
     zh: "OpenAI Sora 视频生成（文生视频、图生视频、remix）",
   },
-  version: "1.0.2",
+  version: "1.0.3",
   channelTypes: [55, 1], // OpenAI-type channels natively serve sora with the same wire format
   author: { name: "QuantumNous" },
   models: ["sora-2", "sora-2-pro"],
@@ -86,19 +86,32 @@ function hasOwn(value, key) {
   return Object.prototype.hasOwnProperty.call(value || {}, key);
 }
 
-function usesNativeSoraDuration(model) {
+function durationFieldMode(model) {
   const name = trimmed(model).toLowerCase();
-  return name === "sora-2" || name === "sora-2-pro";
+  if (name === "sora-2" || name === "sora-2-pro") return "seconds";
+  if (
+    name === "alibaba/wan" ||
+    name.startsWith("alibaba/wan-") ||
+    name === "seedance-2-5" ||
+    name.startsWith("seedance-2-5-") ||
+    name.startsWith("sd-") ||
+    name.startsWith("videos-")
+  )
+    return "duration";
+  return "preserve";
 }
 
 function normalizeDurationFields(req, upstreamModel) {
-  if (usesNativeSoraDuration(upstreamModel)) {
+  const mode = durationFieldMode(upstreamModel);
+  if (mode === "seconds") {
     if (!hasOwn(req, "seconds") && hasOwn(req, "duration")) req.seconds = req.duration;
     delete req.duration;
     return req;
   }
-  if (!hasOwn(req, "duration") && hasOwn(req, "seconds")) req.duration = req.seconds;
-  delete req.seconds;
+  if (mode === "duration") {
+    if (!hasOwn(req, "duration") && hasOwn(req, "seconds")) req.duration = req.seconds;
+    delete req.seconds;
+  }
   return req;
 }
 
