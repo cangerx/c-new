@@ -7,7 +7,7 @@ export const meta = {
     en: "OpenAI Sora video generation (text-to-video, image-to-video, and remix)",
     zh: "OpenAI Sora 视频生成（文生视频、图生视频、remix）",
   },
-  version: "1.0.5",
+  version: "1.0.6",
   channelTypes: [55, 1], // OpenAI-type channels natively serve sora with the same wire format
   author: { name: "QuantumNous" },
   models: ["sora-2", "sora-2-pro"],
@@ -76,14 +76,29 @@ function responsesVideoText(ctx) {
   return '<video controls src="' + escaped + '"></video>';
 }
 
-function appendImageReferences(target, value) {
+const referenceFieldGroups = [
+  {
+    fields: ["images", "referenceImages", "reference_images", "image_urls"],
+    nested: ["url", "image_url", "image", "source"],
+  },
+  {
+    fields: ["videos", "referenceVideos", "reference_videos", "video_urls"],
+    nested: ["url", "video_url", "video", "source"],
+  },
+  {
+    fields: ["audios", "referenceAudios", "reference_audios", "audio_urls"],
+    nested: ["url", "audio_url", "audio", "source"],
+  },
+];
+
+function appendMediaReferences(target, value, nestedKeys) {
   if (Array.isArray(value)) {
-    for (const item of value) appendImageReferences(target, item);
+    for (const item of value) appendMediaReferences(target, item, nestedKeys);
     return;
   }
   if (value && typeof value === "object") {
-    for (const key of ["url", "image_url", "image", "source"]) {
-      if (hasOwn(value, key)) appendImageReferences(target, value[key]);
+    for (const key of nestedKeys) {
+      if (hasOwn(value, key)) appendMediaReferences(target, value[key], nestedKeys);
     }
     return;
   }
@@ -92,25 +107,27 @@ function appendImageReferences(target, value) {
   if (url && !target.includes(url)) target.push(url);
 }
 
-function normalizeImageReferenceFields(req) {
+function normalizeReferenceFields(req) {
   const values = Object.assign({}, req || {});
-  const images = [];
-  for (const key of ["images", "referenceImages", "reference_images", "image_urls"]) {
-    appendImageReferences(images, values[key]);
-  }
-  if (images.length) {
-    values.images = images;
-    values.referenceImages = images;
-    values.reference_images = images;
-    values.image_urls = images;
+  for (const group of referenceFieldGroups) {
+    const references = [];
+    for (const key of group.fields) appendMediaReferences(references, values[key], group.nested);
+    if (!references.length) continue;
+    for (const key of group.fields) values[key] = references;
   }
   return values;
 }
 
 function requestValues(req, model) {
-  const values = normalizeImageReferenceFields(req);
+  const values = normalizeReferenceFields(req);
   values.model = model;
   return values;
+}
+
+function isReferenceArrayField(key) {
+  return referenceFieldGroups.some(function (group) {
+    return group.fields.includes(key);
+  });
 }
 
 function hasOwn(value, key) {
@@ -150,10 +167,18 @@ function copyVideoExtensions(source, target) {
   for (const key of [
     "ratio",
     "resolution",
+    "images",
     "referenceImages",
     "reference_images",
     "image_urls",
+    "videos",
+    "referenceVideos",
+    "reference_videos",
+    "video_urls",
+    "audios",
     "referenceAudios",
+    "reference_audios",
+    "audio_urls",
     "aspect_ratio",
     "seed",
     "negative_prompt",
@@ -184,8 +209,8 @@ export function buildSubmitRequest(ctx) {
     const parts = [];
     const values = requestValues(req, ctx.upstreamModel);
     for (const key of Object.keys(values)) {
-      if (["images", "referenceImages", "reference_images", "image_urls"].includes(key) && Array.isArray(values[key])) {
-        for (const image of values[key]) parts.push({ name: key, value: image });
+      if (isReferenceArrayField(key) && Array.isArray(values[key])) {
+        for (const reference of values[key]) parts.push({ name: key, value: reference });
         continue;
       }
       if (values[key] !== undefined && values[key] !== null && typeof values[key] !== "object") parts.push({ name: key, value: values[key] });
@@ -280,7 +305,14 @@ export const protocols = {
       if (req.referenceImages !== undefined && !Array.isArray(req.referenceImages)) throw new Error("referenceImages must be an array");
       if (req.reference_images !== undefined && !Array.isArray(req.reference_images)) throw new Error("reference_images must be an array");
       if (req.image_urls !== undefined && !Array.isArray(req.image_urls)) throw new Error("image_urls must be an array");
+      if (req.videos !== undefined && !Array.isArray(req.videos)) throw new Error("videos must be an array");
+      if (req.referenceVideos !== undefined && !Array.isArray(req.referenceVideos)) throw new Error("referenceVideos must be an array");
+      if (req.reference_videos !== undefined && !Array.isArray(req.reference_videos)) throw new Error("reference_videos must be an array");
+      if (req.video_urls !== undefined && !Array.isArray(req.video_urls)) throw new Error("video_urls must be an array");
+      if (req.audios !== undefined && !Array.isArray(req.audios)) throw new Error("audios must be an array");
       if (req.referenceAudios !== undefined && !Array.isArray(req.referenceAudios)) throw new Error("referenceAudios must be an array");
+      if (req.reference_audios !== undefined && !Array.isArray(req.reference_audios)) throw new Error("reference_audios must be an array");
+      if (req.audio_urls !== undefined && !Array.isArray(req.audio_urls)) throw new Error("audio_urls must be an array");
       if (req.metadata !== undefined && (!req.metadata || typeof req.metadata !== "object" || Array.isArray(req.metadata)))
         throw new Error("metadata must be an object");
       const input = responsesInput(req);
@@ -378,7 +410,7 @@ protocols.openai_video = {
     const req = {};
     const fields = ctx.body.fields || {};
     for (const name of Object.keys(fields)) {
-      req[name] = first(name);
+      req[name] = isReferenceArrayField(name) ? fields[name].slice() : first(name);
     }
     let hasInputReferenceFile = false;
     for (const file of ctx.body.files || []) {
