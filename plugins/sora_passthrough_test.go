@@ -28,7 +28,7 @@ func decodeSoraPluginMap(t *testing.T, value any) map[string]any {
 	return decoded
 }
 
-func TestSoraOpenAIVideoNormalizesVendorImageReferences(t *testing.T) {
+func TestSoraOpenAIVideoExpandsVendorImageReferenceAliases(t *testing.T) {
 	plugin := compileSoraPlugin(t)
 	references := []any{"https://assets.example/one.png", "https://assets.example/two.png"}
 	audios := []any{"https://assets.example/voice.mp3"}
@@ -67,8 +67,9 @@ func TestSoraOpenAIVideoNormalizesVendorImageReferences(t *testing.T) {
 	require.NoError(t, err)
 	submit := decodeSoraPluginMap(t, submitValue)
 	submitBody := submit["body"].(map[string]any)
-	assert.Equal(t, references, submitBody["images"])
-	assert.NotContains(t, submitBody, "referenceImages")
+	for _, key := range []string{"images", "referenceImages", "reference_images", "image_urls"} {
+		assert.Equal(t, references, submitBody[key], key)
+	}
 	assert.Equal(t, body["referenceAudios"], submit["body"].(map[string]any)["referenceAudios"])
 }
 
@@ -98,9 +99,9 @@ func TestSoraSubmitNormalizesAllImageArrayAliases(t *testing.T) {
 		"https://assets.example/three.png",
 		"https://assets.example/four.png",
 	}, body["images"])
-	assert.NotContains(t, body, "referenceImages")
-	assert.NotContains(t, body, "reference_images")
-	assert.NotContains(t, body, "image_urls")
+	for _, key := range []string{"images", "referenceImages", "reference_images", "image_urls"} {
+		assert.Equal(t, body["images"], body[key], key)
+	}
 }
 
 func TestSoraMultipartWritesNormalizedImageURLs(t *testing.T) {
@@ -126,8 +127,10 @@ func TestSoraMultipartWritesNormalizedImageURLs(t *testing.T) {
 	submit := decodeSoraPluginMap(t, value)
 	assert.Equal(t, "multipart", submit["bodyType"])
 	parts := submit["parts"].([]any)
-	assert.Contains(t, parts, map[string]any{"name": "images", "value": "https://assets.example/one.png"})
-	assert.Contains(t, parts, map[string]any{"name": "images", "value": "https://assets.example/two.png"})
+	for _, key := range []string{"images", "referenceImages", "reference_images", "image_urls"} {
+		assert.Contains(t, parts, map[string]any{"name": key, "value": "https://assets.example/one.png"})
+		assert.Contains(t, parts, map[string]any{"name": key, "value": "https://assets.example/two.png"})
+	}
 	assert.Contains(t, parts, map[string]any{
 		"name":     "input_reference",
 		"fileRef":  "request_file:input_reference",

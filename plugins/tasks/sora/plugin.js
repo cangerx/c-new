@@ -7,7 +7,7 @@ export const meta = {
     en: "OpenAI Sora video generation (text-to-video, image-to-video, and remix)",
     zh: "OpenAI Sora 视频生成（文生视频、图生视频、remix）",
   },
-  version: "1.0.4",
+  version: "1.0.5",
   channelTypes: [55, 1], // OpenAI-type channels natively serve sora with the same wire format
   author: { name: "QuantumNous" },
   models: ["sora-2", "sora-2-pro"],
@@ -98,10 +98,12 @@ function normalizeImageReferenceFields(req) {
   for (const key of ["images", "referenceImages", "reference_images", "image_urls"]) {
     appendImageReferences(images, values[key]);
   }
-  if (images.length) values.images = images;
-  delete values.referenceImages;
-  delete values.reference_images;
-  delete values.image_urls;
+  if (images.length) {
+    values.images = images;
+    values.referenceImages = images;
+    values.reference_images = images;
+    values.image_urls = images;
+  }
   return values;
 }
 
@@ -182,8 +184,8 @@ export function buildSubmitRequest(ctx) {
     const parts = [];
     const values = requestValues(req, ctx.upstreamModel);
     for (const key of Object.keys(values)) {
-      if (key === "images" && Array.isArray(values[key])) {
-        for (const image of values[key]) parts.push({ name: "images", value: image });
+      if (["images", "referenceImages", "reference_images", "image_urls"].includes(key) && Array.isArray(values[key])) {
+        for (const image of values[key]) parts.push({ name: key, value: image });
         continue;
       }
       if (values[key] !== undefined && values[key] !== null && typeof values[key] !== "object") parts.push({ name: key, value: values[key] });
