@@ -72,11 +72,20 @@ func TestSoraOpenAIVideoExpandsVendorMediaReferenceAliases(t *testing.T) {
 	for _, key := range []string{"images", "referenceImages", "reference_images", "image_urls"} {
 		assert.Equal(t, references, submitBody[key], key)
 	}
+	for _, key := range []string{"input_reference", "image", "image_url", "referenceImage", "reference_image"} {
+		assert.Equal(t, references[0], submitBody[key], key)
+	}
 	for _, key := range []string{"videos", "referenceVideos", "reference_videos", "video_urls"} {
 		assert.Equal(t, videos, submitBody[key], key)
 	}
+	for _, key := range []string{"video", "video_url", "referenceVideo", "reference_video", "input_video"} {
+		assert.Equal(t, videos[0], submitBody[key], key)
+	}
 	for _, key := range []string{"audios", "referenceAudios", "reference_audios", "audio_urls"} {
 		assert.Equal(t, audios, submitBody[key], key)
+	}
+	for _, key := range []string{"audio", "audio_url", "referenceAudio", "reference_audio", "input_audio"} {
+		assert.Equal(t, audios[0], submitBody[key], key)
 	}
 }
 
@@ -109,6 +118,7 @@ func TestSoraSubmitNormalizesAllImageArrayAliases(t *testing.T) {
 	for _, key := range []string{"images", "referenceImages", "reference_images", "image_urls"} {
 		assert.Equal(t, body["images"], body[key], key)
 	}
+	assert.Equal(t, "https://assets.example/one.png", body["input_reference"])
 }
 
 func TestSoraSubmitNormalizesVideoAndAudioArrayAliases(t *testing.T) {
@@ -130,9 +140,11 @@ func TestSoraSubmitNormalizesVideoAndAudioArrayAliases(t *testing.T) {
 	for _, key := range []string{"videos", "referenceVideos", "reference_videos", "video_urls"} {
 		assert.Equal(t, []any{"https://assets.example/one.mp4", "https://assets.example/two.mp4"}, body[key], key)
 	}
+	assert.Equal(t, "https://assets.example/one.mp4", body["video_url"])
 	for _, key := range []string{"audios", "referenceAudios", "reference_audios", "audio_urls"} {
 		assert.Equal(t, []any{"https://assets.example/two.mp3", "https://assets.example/one.mp3"}, body[key], key)
 	}
+	assert.Equal(t, "https://assets.example/two.mp3", body["audio_url"])
 }
 
 func TestSoraMultipartWritesNormalizedImageURLs(t *testing.T) {
@@ -164,6 +176,8 @@ func TestSoraMultipartWritesNormalizedImageURLs(t *testing.T) {
 		assert.Contains(t, parts, map[string]any{"name": key, "value": "https://assets.example/one.png"})
 		assert.Contains(t, parts, map[string]any{"name": key, "value": "https://assets.example/two.png"})
 	}
+	assert.NotContains(t, parts, map[string]any{"name": "input_reference", "value": "https://assets.example/one.png"})
+	assert.Contains(t, parts, map[string]any{"name": "image_url", "value": "https://assets.example/one.png"})
 	for _, key := range []string{"videos", "referenceVideos", "reference_videos", "video_urls"} {
 		assert.Contains(t, parts, map[string]any{"name": key, "value": "https://assets.example/guide.mp4"})
 	}

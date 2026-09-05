@@ -7,7 +7,7 @@ export const meta = {
     en: "OpenAI Sora video generation (text-to-video, image-to-video, and remix)",
     zh: "OpenAI Sora 视频生成（文生视频、图生视频、remix）",
   },
-  version: "1.0.6",
+  version: "1.0.7",
   channelTypes: [55, 1], // OpenAI-type channels natively serve sora with the same wire format
   author: { name: "QuantumNous" },
   models: ["sora-2", "sora-2-pro"],
@@ -79,14 +79,17 @@ function responsesVideoText(ctx) {
 const referenceFieldGroups = [
   {
     fields: ["images", "referenceImages", "reference_images", "image_urls"],
+    singular: ["input_reference", "image", "image_url", "referenceImage", "reference_image"],
     nested: ["url", "image_url", "image", "source"],
   },
   {
     fields: ["videos", "referenceVideos", "reference_videos", "video_urls"],
+    singular: ["video", "video_url", "referenceVideo", "reference_video", "input_video"],
     nested: ["url", "video_url", "video", "source"],
   },
   {
     fields: ["audios", "referenceAudios", "reference_audios", "audio_urls"],
+    singular: ["audio", "audio_url", "referenceAudio", "reference_audio", "input_audio"],
     nested: ["url", "audio_url", "audio", "source"],
   },
 ];
@@ -112,8 +115,12 @@ function normalizeReferenceFields(req) {
   for (const group of referenceFieldGroups) {
     const references = [];
     for (const key of group.fields) appendMediaReferences(references, values[key], group.nested);
+    for (const key of group.singular) appendMediaReferences(references, values[key], group.nested);
     if (!references.length) continue;
     for (const key of group.fields) values[key] = references;
+    for (const key of group.singular) {
+      if (!hasOwn(values, key)) values[key] = references[0];
+    }
   }
   return values;
 }
@@ -209,6 +216,7 @@ export function buildSubmitRequest(ctx) {
     const parts = [];
     const values = requestValues(req, ctx.upstreamModel);
     for (const key of Object.keys(values)) {
+      if ((ctx.files || []).some(function (file) { return file.field === key; })) continue;
       if (isReferenceArrayField(key) && Array.isArray(values[key])) {
         for (const reference of values[key]) parts.push({ name: key, value: reference });
         continue;
