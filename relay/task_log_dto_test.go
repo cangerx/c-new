@@ -38,7 +38,17 @@ func TestTaskModel2LogDtoPreservesNonURLResponseFields(t *testing.T) {
 		TaskID: "task_public",
 		Action: constant.TaskActionTextToVideo,
 		Status: model.TaskStatusSuccess,
-		Data:   json.RawMessage(`{"model":"video-model","duration":10,"nested":{"status":"ready"}}`),
+		Data: json.RawMessage(`{
+			"id":"upstream-private",
+			"task_id":"upstream-task-private",
+			"model":"video-model",
+			"duration":10,
+			"billing_amount":0.24,
+			"billing_currency":"CNY",
+			"billing_quota":120000,
+			"billing_status":"settled",
+			"nested":{"status":"ready","totalCost":0.2,"apiKey":"secret"}
+		}`),
 	}
 
 	result := TaskModel2LogDto(task)
@@ -46,4 +56,19 @@ func TestTaskModel2LogDtoPreservesNonURLResponseFields(t *testing.T) {
 	require.NoError(t, common.Unmarshal(result.Data, &data))
 	require.Equal(t, "video-model", data["model"])
 	require.Equal(t, float64(10), data["duration"])
+	require.NotContains(t, data, "id")
+	require.NotContains(t, data, "task_id")
+	require.NotContains(t, data, "billing_amount")
+	require.NotContains(t, data, "billing_currency")
+	require.NotContains(t, data, "billing_quota")
+	require.NotContains(t, data, "billing_status")
+	nested := data["nested"].(map[string]any)
+	require.Equal(t, "ready", nested["status"])
+	require.NotContains(t, nested, "totalCost")
+	require.NotContains(t, nested, "apiKey")
+}
+
+func TestTaskModel2LogDtoDropsUnstructuredUpstreamResponse(t *testing.T) {
+	task := &model.Task{Data: json.RawMessage(`upstream amount=0.24 token=secret`)}
+	require.Empty(t, TaskModel2LogDto(task).Data)
 }

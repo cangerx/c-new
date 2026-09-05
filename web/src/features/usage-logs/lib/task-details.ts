@@ -17,11 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { TASK_ACTIONS } from '../constants'
-import type {
-  TaskLog,
-  TaskPluginInfo,
-  TaskPluginRuntimeInfo,
-} from '../types'
+import type { TaskLog, TaskPluginInfo, TaskPluginRuntimeInfo } from '../types'
 
 export interface TaskDetailAccess {
   plugin?: TaskPluginInfo
@@ -174,28 +170,75 @@ const URL_VALUE_KEYS = new Set([
   'download_url',
 ])
 
-function sanitizeResponseUrls(value: unknown, key = ''): unknown {
+const SENSITIVE_RESPONSE_KEY_PARTS = new Set([
+  'amount',
+  'authorization',
+  'balance',
+  'billing',
+  'charge',
+  'cost',
+  'credential',
+  'currency',
+  'fee',
+  'password',
+  'payment',
+  'price',
+  'quota',
+  'secret',
+  'signature',
+  'token',
+])
+
+const SENSITIVE_RESPONSE_IDS = new Set([
+  'api_key',
+  'apikey',
+  'id',
+  'private_key',
+  'request_id',
+  'task_id',
+  'trace_id',
+  'upstream_request_id',
+  'upstream_task_id',
+])
+
+function isSensitiveResponseKey(key: string): boolean {
+  const normalized = key
+    .trim()
+    .replaceAll(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .replaceAll(/[-.]/g, '_')
+  if (SENSITIVE_RESPONSE_IDS.has(normalized)) return true
+  return normalized
+    .split('_')
+    .some((part) => SENSITIVE_RESPONSE_KEY_PARTS.has(part))
+}
+
+function sanitizeResponseData(value: unknown, key = ''): unknown {
+  if (key && isSensitiveResponseKey(key)) return undefined
   if (typeof value === 'string') {
     if (value && URL_VALUE_KEYS.has(key)) return '[hidden upstream URL]'
     return value.replaceAll(HTTP_URL_PATTERN, '[hidden upstream URL]')
   }
   if (Array.isArray(value)) {
-    return value.map((item) => sanitizeResponseUrls(item, key))
+    return value
+      .map((item) => sanitizeResponseData(item))
+      .filter((item) => item !== undefined)
   }
   const record = asRecord(value)
   if (!record) return value
   return Object.fromEntries(
-    Object.entries(record).map(([childKey, child]) => [
-      childKey,
-      sanitizeResponseUrls(child, childKey),
-    ])
+    Object.entries(record).flatMap(([childKey, child]) => {
+      const sanitized = sanitizeResponseData(child, childKey)
+      return sanitized === undefined ? [] : [[childKey, sanitized]]
+    })
   )
 }
 
 function formatSanitizedResponse(value: unknown): string {
   if (value == null || value === '') return ''
-  const sanitized = sanitizeResponseUrls(parseJsonValue(value))
-  if (typeof sanitized === 'string') return sanitized
+  const parsed = parseJsonValue(value)
+  if (typeof parsed === 'string') return ''
+  const sanitized = sanitizeResponseData(parsed)
   try {
     return JSON.stringify(sanitized, null, 2)
   } catch {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -12,7 +13,41 @@ import (
 	"github.com/QuantumNous/new-api/model"
 )
 
-var taskLogHTTPURLPattern = regexp.MustCompile(`(?i)https?://[^\s"'<>\\\])}]+`)
+var (
+	taskLogHTTPURLPattern     = regexp.MustCompile(`(?i)https?://[^\s"'<>\\\])}]+`)
+	taskLogKeyBoundaryPattern = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+)
+
+var taskLogSensitiveResponseKeyParts = map[string]struct{}{
+	"amount":        {},
+	"authorization": {},
+	"balance":       {},
+	"billing":       {},
+	"charge":        {},
+	"cost":          {},
+	"credential":    {},
+	"currency":      {},
+	"fee":           {},
+	"password":      {},
+	"payment":       {},
+	"price":         {},
+	"quota":         {},
+	"secret":        {},
+	"signature":     {},
+	"token":         {},
+}
+
+var taskLogSensitiveResponseIDs = map[string]struct{}{
+	"api_key":             {},
+	"apikey":              {},
+	"id":                  {},
+	"private_key":         {},
+	"request_id":          {},
+	"task_id":             {},
+	"trace_id":            {},
+	"upstream_request_id": {},
+	"upstream_task_id":    {},
+}
 
 // TaskModel2LogDto removes upstream locations at the dashboard API boundary.
 // The original task data remains stored for polling and server-side diagnosis.
@@ -47,38 +82,62 @@ func sanitizeTaskLogResponseData(data json.RawMessage) json.RawMessage {
 	}
 	var value any
 	if err := common.Unmarshal(data, &value); err != nil {
-		sanitized, marshalErr := common.Marshal(sanitizeTaskLogString("", string(data)))
-		if marshalErr != nil {
-			return nil
-		}
-		return json.RawMessage(sanitized)
+		// Unstructured upstream payloads cannot be redacted reliably.
+		return nil
 	}
-	sanitized, err := common.Marshal(sanitizeTaskLogValue("", value))
+	sanitizedValue, _ := sanitizeTaskLogValue("", value)
+	sanitized, err := common.Marshal(sanitizedValue)
 	if err != nil {
 		return nil
 	}
 	return json.RawMessage(sanitized)
 }
 
-func sanitizeTaskLogValue(key string, value any) any {
+func sanitizeTaskLogValue(key string, value any) (any, bool) {
+	if isSensitiveTaskLogResponseKey(key) {
+		return nil, false
+	}
 	switch typed := value.(type) {
 	case string:
-		return sanitizeTaskLogString(key, typed)
+		return sanitizeTaskLogString(key, typed), true
 	case []any:
-		result := make([]any, len(typed))
-		for i, item := range typed {
-			result[i] = sanitizeTaskLogValue(key, item)
+		result := make([]any, 0, len(typed))
+		for _, item := range typed {
+			sanitized, keep := sanitizeTaskLogValue("", item)
+			if keep {
+				result = append(result, sanitized)
+			}
 		}
-		return result
+		return result, true
 	case map[string]any:
 		result := make(map[string]any, len(typed))
 		for childKey, item := range typed {
-			result[childKey] = sanitizeTaskLogValue(childKey, item)
+			sanitized, keep := sanitizeTaskLogValue(childKey, item)
+			if keep {
+				result[childKey] = sanitized
+			}
 		}
-		return result
+		return result, true
 	default:
-		return value
+		return value, true
 	}
+}
+
+func isSensitiveTaskLogResponseKey(key string) bool {
+	normalized := taskLogKeyBoundaryPattern.ReplaceAllString(strings.TrimSpace(key), `${1}_${2}`)
+	normalized = strings.NewReplacer("-", "_", ".", "_").Replace(strings.ToLower(normalized))
+	if normalized == "" {
+		return false
+	}
+	if _, sensitive := taskLogSensitiveResponseIDs[normalized]; sensitive {
+		return true
+	}
+	for _, part := range strings.Split(normalized, "_") {
+		if _, sensitive := taskLogSensitiveResponseKeyParts[part]; sensitive {
+			return true
+		}
+	}
+	return false
 }
 
 func sanitizeTaskLogString(key string, value string) string {

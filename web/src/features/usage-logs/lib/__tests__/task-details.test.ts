@@ -103,9 +103,17 @@ describe('getTaskLogDetails', () => {
         }),
       },
       data: {
+        id: 'upstream-private',
+        task_id: 'upstream-task-private',
         status: 'succeeded',
+        billing_amount: 0.24,
+        billing_currency: 'CNY',
+        billing_quota: 120000,
+        billing_status: 'settled',
         data: {
           model: 'upstream-video-model',
+          apiKey: 'secret-key',
+          totalCost: 0.2,
           result: {
             video_url: 'https://cdn.example.com/upstream.mp4',
             download_url: 'cdn.internal/private.mp4',
@@ -122,6 +130,14 @@ describe('getTaskLogDetails', () => {
     expect(details.rawResponse).not.toContain('cdn.example.com')
     expect(details.rawResponse).not.toContain('origin.example.com')
     expect(details.rawResponse).not.toContain('cdn.internal')
+    expect(details.rawResponse).not.toContain('upstream-private')
+    expect(details.rawResponse).not.toContain('upstream-task-private')
+    expect(details.rawResponse).not.toContain('billing_amount')
+    expect(details.rawResponse).not.toContain('billing_currency')
+    expect(details.rawResponse).not.toContain('billing_quota')
+    expect(details.rawResponse).not.toContain('billing_status')
+    expect(details.rawResponse).not.toContain('secret-key')
+    expect(details.rawResponse).not.toContain('totalCost')
     expect(details.rawResponse).toContain('[hidden upstream URL]')
     expect(details.proxyResultUrl).toBe('/v1/videos/task_public/content')
     expect(details.resultUrl).toBe('/v1/videos/task_public/content')
