@@ -7,7 +7,7 @@ export const meta = {
     en: "OpenAI Sora video generation (text-to-video, image-to-video, and remix)",
     zh: "OpenAI Sora 视频生成（文生视频、图生视频、remix）",
   },
-  version: "1.0.8",
+  version: "1.0.9",
   channelTypes: [55, 1], // OpenAI-type channels natively serve sora with the same wire format
   author: { name: "QuantumNous" },
   models: ["sora-2", "sora-2-pro"],
@@ -137,70 +137,14 @@ function appendMediaReferences(target, value, nestedKeys) {
   if (url && !target.includes(url)) target.push(url);
 }
 
-function normalizeReferenceFields(req) {
-  const values = Object.assign({}, req || {});
-  for (const rule of mediaFieldRules) {
-    for (const alias of Object.keys(rule.aliases)) {
-      if (!hasOwn(values, alias)) continue;
-      const target = rule.aliases[alias];
-      const references = [];
-      appendMediaReferences(references, values[target], rule.nested);
-      appendMediaReferences(references, values[alias], rule.nested);
-      if (references.length) {
-        const plural = ["images", "reference_images", "reference_image_urls", "videos", "reference_videos", "video_references", "audios", "reference_audios", "audio_references"].includes(target);
-        values[target] = plural || references.length > 1 ? references : references[0];
-      } else if (!hasOwn(values, target)) {
-        values[target] = values[alias];
-      }
-      delete values[alias];
-    }
-  }
-  return values;
-}
-
 function requestValues(req, model) {
-  const values = normalizeReferenceFields(req);
+  const values = Object.assign({}, req || {});
   values.model = model;
   return values;
 }
 
-function isMediaField(key) {
-  return mediaFieldRules.some(function (rule) {
-    return rule.accepted.includes(key) || hasOwn(rule.aliases, key);
-  });
-}
-
 function hasOwn(value, key) {
   return Object.prototype.hasOwnProperty.call(value || {}, key);
-}
-
-function durationFieldMode(model) {
-  const name = trimmed(model).toLowerCase();
-  if (name === "sora-2" || name === "sora-2-pro") return "seconds";
-  if (
-    name === "alibaba/wan" ||
-    name.startsWith("alibaba/wan-") ||
-    name === "seedance-2-5" ||
-    name.startsWith("seedance-2-5-") ||
-    name.startsWith("sd-") ||
-    name.startsWith("videos-")
-  )
-    return "duration";
-  return "preserve";
-}
-
-function normalizeDurationFields(req, upstreamModel) {
-  const mode = durationFieldMode(upstreamModel);
-  if (mode === "seconds") {
-    if (!hasOwn(req, "seconds") && hasOwn(req, "duration")) req.seconds = req.duration;
-    delete req.duration;
-    return req;
-  }
-  if (mode === "duration") {
-    if (!hasOwn(req, "duration") && hasOwn(req, "seconds")) req.duration = req.seconds;
-    delete req.seconds;
-  }
-  return req;
 }
 
 function copyVideoExtensions(source, target) {
@@ -246,14 +190,15 @@ export function buildSubmitRequest(ctx) {
     const parts = [];
     const values = requestValues(req, ctx.upstreamModel);
     for (const key of Object.keys(values)) {
-      if (isMediaField(key) && Array.isArray(values[key])) {
-        for (const reference of values[key]) parts.push({ name: key, value: reference });
+      if (Array.isArray(values[key])) {
+        for (const item of values[key]) {
+          if (item === undefined || item === null) continue;
+          parts.push({ name: key, value: typeof item === "object" ? JSON.stringify(item) : item });
+        }
         continue;
       }
-      if (values[key] !== undefined && values[key] !== null && typeof values[key] !== "object") parts.push({ name: key, value: values[key] });
-    }
-    if (values.metadata && typeof values.metadata === "object" && !Array.isArray(values.metadata)) {
-      parts.push({ name: "metadata", value: JSON.stringify(values.metadata) });
+      if (values[key] === undefined || values[key] === null) continue;
+      parts.push({ name: key, value: typeof values[key] === "object" ? JSON.stringify(values[key]) : values[key] });
     }
     for (const file of ctx.files) parts.push({ name: file.field, fileRef: file.ref, filename: file.filename });
     return { url: ctx.baseUrl + "/v1/videos", method: "POST", headers, bodyType: "multipart", parts };
@@ -362,7 +307,6 @@ export const protocols = {
       if (hasOwn(req, "size")) requestBody.size = req.size;
       if (hasOwn(req, "metadata")) requestBody.metadata = req.metadata;
       copyVideoExtensions(req, requestBody);
-      normalizeDurationFields(requestBody, ctx.upstreamModel || model);
       return { kind: "submit", model: model, action: hasImageReference(requestBody, false) ? "image_to_video" : "text_to_video", requestBody: requestBody };
     },
     renderEvents: function (ctx, task, previousState) {
@@ -427,7 +371,6 @@ protocols.openai_video = {
       const seconds = req.seconds === undefined ? req.duration : req.seconds;
       if (seconds !== undefined && (!Number.isFinite(Number(seconds)) || Number(seconds) <= 0 || Number(seconds) > 3600))
         throw new Error("seconds must be between 1 and 3600");
-      normalizeDurationFields(req, ctx.upstreamModel || ctx.model || req.model);
       return {
         kind: "submit",
         model: ctx.model,
@@ -444,7 +387,7 @@ protocols.openai_video = {
     const fields = ctx.body.fields || {};
     for (const name of Object.keys(fields)) {
       const values = fields[name] || [];
-      req[name] = isMediaField(name) && values.length > 1 ? values.slice() : first(name);
+      req[name] = values.length > 1 ? values.slice() : first(name);
     }
     let hasImageReferenceFile = false;
     for (const file of ctx.body.files || []) {
@@ -461,14 +404,10 @@ protocols.openai_video = {
         throw new Error("metadata must be a JSON object string");
       }
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("metadata must be a JSON object string");
-      req.metadata = parsed;
     }
-    if (req.seconds !== undefined) req.seconds = Number(req.seconds);
-    if (req.duration !== undefined) req.duration = Number(req.duration);
     const seconds = req.seconds === undefined ? req.duration : req.seconds;
     if (seconds !== undefined && (!Number.isFinite(Number(seconds)) || Number(seconds) <= 0 || Number(seconds) > 3600))
       throw new Error("seconds must be between 1 and 3600");
-    normalizeDurationFields(req, ctx.upstreamModel || ctx.model || req.model);
     return {
       kind: "submit",
       model: ctx.model,
