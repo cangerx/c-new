@@ -7,7 +7,7 @@ export const meta = {
     en: "OpenAI Sora video generation (text-to-video, image-to-video, and remix)",
     zh: "OpenAI Sora 视频生成（文生视频、图生视频、remix）",
   },
-  version: "1.0.3",
+  version: "1.0.4",
   channelTypes: [55, 1], // OpenAI-type channels natively serve sora with the same wire format
   author: { name: "QuantumNous" },
   models: ["sora-2", "sora-2-pro"],
@@ -76,8 +76,37 @@ function responsesVideoText(ctx) {
   return '<video controls src="' + escaped + '"></video>';
 }
 
-function requestValues(req, model) {
+function appendImageReferences(target, value) {
+  if (Array.isArray(value)) {
+    for (const item of value) appendImageReferences(target, item);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const key of ["url", "image_url", "image", "source"]) {
+      if (hasOwn(value, key)) appendImageReferences(target, value[key]);
+    }
+    return;
+  }
+  if (typeof value !== "string") return;
+  const url = trimmed(value);
+  if (url && !target.includes(url)) target.push(url);
+}
+
+function normalizeImageReferenceFields(req) {
   const values = Object.assign({}, req || {});
+  const images = [];
+  for (const key of ["images", "referenceImages", "reference_images", "image_urls"]) {
+    appendImageReferences(images, values[key]);
+  }
+  if (images.length) values.images = images;
+  delete values.referenceImages;
+  delete values.reference_images;
+  delete values.image_urls;
+  return values;
+}
+
+function requestValues(req, model) {
+  const values = normalizeImageReferenceFields(req);
   values.model = model;
   return values;
 }
@@ -116,14 +145,26 @@ function normalizeDurationFields(req, upstreamModel) {
 }
 
 function copyVideoExtensions(source, target) {
-  for (const key of ["ratio", "resolution", "referenceImages", "referenceAudios", "aspect_ratio", "seed", "negative_prompt", "watermark", "generate_audio"]) {
+  for (const key of [
+    "ratio",
+    "resolution",
+    "referenceImages",
+    "reference_images",
+    "image_urls",
+    "referenceAudios",
+    "aspect_ratio",
+    "seed",
+    "negative_prompt",
+    "watermark",
+    "generate_audio",
+  ]) {
     if (hasOwn(source, key)) target[key] = source[key];
   }
 }
 
 function hasImageReference(req, hasInputReferenceFile) {
   if (hasInputReferenceFile || trimmed(req && req.input_reference) || trimmed(req && req.image)) return true;
-  return [req && req.images, req && req.referenceImages].some(function (images) {
+  return [req && req.images, req && req.referenceImages, req && req.reference_images, req && req.image_urls].some(function (images) {
     return Array.isArray(images) && images.length > 0;
   });
 }
@@ -141,6 +182,10 @@ export function buildSubmitRequest(ctx) {
     const parts = [];
     const values = requestValues(req, ctx.upstreamModel);
     for (const key of Object.keys(values)) {
+      if (key === "images" && Array.isArray(values[key])) {
+        for (const image of values[key]) parts.push({ name: "images", value: image });
+        continue;
+      }
       if (values[key] !== undefined && values[key] !== null && typeof values[key] !== "object") parts.push({ name: key, value: values[key] });
     }
     if (values.metadata && typeof values.metadata === "object" && !Array.isArray(values.metadata)) {
@@ -231,6 +276,8 @@ export const protocols = {
       if (req.input !== undefined && typeof req.input !== "string" && !Array.isArray(req.input)) throw new Error("input must be a string or array");
       if (req.images !== undefined && !Array.isArray(req.images)) throw new Error("images must be an array");
       if (req.referenceImages !== undefined && !Array.isArray(req.referenceImages)) throw new Error("referenceImages must be an array");
+      if (req.reference_images !== undefined && !Array.isArray(req.reference_images)) throw new Error("reference_images must be an array");
+      if (req.image_urls !== undefined && !Array.isArray(req.image_urls)) throw new Error("image_urls must be an array");
       if (req.referenceAudios !== undefined && !Array.isArray(req.referenceAudios)) throw new Error("referenceAudios must be an array");
       if (req.metadata !== undefined && (!req.metadata || typeof req.metadata !== "object" || Array.isArray(req.metadata)))
         throw new Error("metadata must be an object");
@@ -249,8 +296,7 @@ export const protocols = {
       if (hasOwn(req, "metadata")) requestBody.metadata = req.metadata;
       copyVideoExtensions(req, requestBody);
       normalizeDurationFields(requestBody, ctx.upstreamModel || model);
-      const hasReferenceImages = Array.isArray(req.referenceImages) && req.referenceImages.length > 0;
-      return { kind: "submit", model: model, action: images.length || hasReferenceImages ? "image_to_video" : "text_to_video", requestBody: requestBody };
+      return { kind: "submit", model: model, action: images.length || hasImageReference(req, false) ? "image_to_video" : "text_to_video", requestBody: requestBody };
     },
     renderEvents: function (ctx, task, previousState) {
       const status = String(task.status || "UNKNOWN").toUpperCase();

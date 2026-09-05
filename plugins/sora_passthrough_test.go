@@ -28,7 +28,7 @@ func decodeSoraPluginMap(t *testing.T, value any) map[string]any {
 	return decoded
 }
 
-func TestSoraOpenAIVideoPreservesVendorParameters(t *testing.T) {
+func TestSoraOpenAIVideoNormalizesVendorImageReferences(t *testing.T) {
 	plugin := compileSoraPlugin(t)
 	references := []any{"https://assets.example/one.png", "https://assets.example/two.png"}
 	audios := []any{"https://assets.example/voice.mp3"}
@@ -66,8 +66,73 @@ func TestSoraOpenAIVideoPreservesVendorParameters(t *testing.T) {
 	})
 	require.NoError(t, err)
 	submit := decodeSoraPluginMap(t, submitValue)
-	assert.Equal(t, body["referenceImages"], submit["body"].(map[string]any)["referenceImages"])
+	submitBody := submit["body"].(map[string]any)
+	assert.Equal(t, references, submitBody["images"])
+	assert.NotContains(t, submitBody, "referenceImages")
 	assert.Equal(t, body["referenceAudios"], submit["body"].(map[string]any)["referenceAudios"])
+}
+
+func TestSoraSubmitNormalizesAllImageArrayAliases(t *testing.T) {
+	plugin := compileSoraPlugin(t)
+	value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
+		"baseUrl":       "https://provider.example",
+		"apiKey":        "secret",
+		"upstreamModel": "vendor-video",
+		"requestBody": map[string]any{
+			"prompt":           "animate",
+			"images":           []any{"https://assets.example/one.png"},
+			"referenceImages":  []any{"https://assets.example/two.png"},
+			"reference_images": []any{map[string]any{"url": "https://assets.example/three.png"}},
+			"image_urls": []any{
+				"https://assets.example/one.png",
+				map[string]any{"image_url": map[string]any{"url": "https://assets.example/four.png"}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	submit := decodeSoraPluginMap(t, value)
+	body := submit["body"].(map[string]any)
+	assert.Equal(t, []any{
+		"https://assets.example/one.png",
+		"https://assets.example/two.png",
+		"https://assets.example/three.png",
+		"https://assets.example/four.png",
+	}, body["images"])
+	assert.NotContains(t, body, "referenceImages")
+	assert.NotContains(t, body, "reference_images")
+	assert.NotContains(t, body, "image_urls")
+}
+
+func TestSoraMultipartWritesNormalizedImageURLs(t *testing.T) {
+	plugin := compileSoraPlugin(t)
+	file := map[string]any{
+		"ref":      "request_file:input_reference",
+		"field":    "input_reference",
+		"filename": "frame.png",
+		"mimeType": "image/png",
+		"size":     12,
+	}
+	value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
+		"baseUrl":       "https://provider.example",
+		"apiKey":        "secret",
+		"upstreamModel": "vendor-video",
+		"requestBody": map[string]any{
+			"prompt":          "animate",
+			"referenceImages": []any{"https://assets.example/one.png", "https://assets.example/two.png"},
+		},
+		"files": []any{file},
+	})
+	require.NoError(t, err)
+	submit := decodeSoraPluginMap(t, value)
+	assert.Equal(t, "multipart", submit["bodyType"])
+	parts := submit["parts"].([]any)
+	assert.Contains(t, parts, map[string]any{"name": "images", "value": "https://assets.example/one.png"})
+	assert.Contains(t, parts, map[string]any{"name": "images", "value": "https://assets.example/two.png"})
+	assert.Contains(t, parts, map[string]any{
+		"name":     "input_reference",
+		"fileRef":  "request_file:input_reference",
+		"filename": "frame.png",
+	})
 }
 
 func TestSoraDurationUsesNativeOrVendorWireFormat(t *testing.T) {
