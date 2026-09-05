@@ -7,7 +7,7 @@ export const meta = {
     en: "OpenAI Sora video generation (text-to-video, image-to-video, and remix)",
     zh: "OpenAI Sora 视频生成（文生视频、图生视频、remix）",
   },
-  version: "1.0.13",
+  version: "1.0.15",
   channelTypes: [55, 1], // OpenAI-type channels natively serve sora with the same wire format
   author: { name: "QuantumNous" },
   models: ["sora-2", "sora-2-pro"],
@@ -211,11 +211,6 @@ function isMegabyVideoUpstream(baseUrl) {
   return host === "newapi.megabyai.cc" || host === "ai.772.ee";
 }
 
-function isAICostVideoUpstream(baseUrl) {
-  const host = upstreamHostname(baseUrl);
-  return host === "aicost.me" || host === "www.aicost.me";
-}
-
 function isMiniMaxH3Model(model) {
   return trimmed(model).toLowerCase().startsWith("minimax-h3");
 }
@@ -251,23 +246,6 @@ function normalizeMegabyVideoRequest(req, model) {
   moveMediaReferences(values, providerMediaFields.images, "referenceImages", mediaFieldRules[0].nested);
   moveMediaReferences(values, providerMediaFields.videos, "referenceVideos", mediaFieldRules[1].nested);
   moveMediaReferences(values, providerMediaFields.audios, "referenceAudios", mediaFieldRules[2].nested);
-  return values;
-}
-
-function normalizeAICostVideoRequest(req, model) {
-  const values = requestValues(req, model);
-  if (!hasOwn(values, "seconds") && hasOwn(values, "duration")) {
-    values.seconds = String(values.duration);
-  }
-  if (hasOwn(values, "seconds")) values.seconds = String(values.seconds);
-  delete values.duration;
-  if (!hasOwn(values, "aspect_ratio") && hasOwn(values, "ratio")) {
-    values.aspect_ratio = values.ratio;
-  }
-  delete values.ratio;
-  moveMediaReferences(values, providerMediaFields.images, "images", mediaFieldRules[0].nested);
-  moveMediaReferences(values, providerMediaFields.videos, "videos", mediaFieldRules[1].nested);
-  moveMediaReferences(values, providerMediaFields.audios, "audios", mediaFieldRules[2].nested);
   return values;
 }
 
@@ -375,7 +353,6 @@ function upstreamRequestValues(ctx) {
   const model = ctx.upstreamModel;
   if (isMiniMaxH3Model(model)) return normalizeMiniMaxH3Request(req, model);
   if (isMegabyVideoUpstream(ctx.baseUrl)) return normalizeMegabyVideoRequest(req, model);
-  if (isAICostVideoUpstream(ctx.baseUrl)) return normalizeAICostVideoRequest(req, model);
   return requestValues(req, model);
 }
 

@@ -2,8 +2,11 @@ package plugins_test
 
 import (
 	"bytes"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -170,7 +173,7 @@ func TestSoraReferenceMediaSurviveHTTPAdaptorSerialization(t *testing.T) {
 	assert.NotContains(t, captured, "referenceAudios")
 }
 
-func TestSoraGrokUsesAICostCompatibleFieldNames(t *testing.T) {
+func TestSoraGrokAICostPreservesJSONFieldNames(t *testing.T) {
 	plugin := compileSoraPlugin(t)
 	value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
 		"baseUrl":       "https://www.aicost.me",
@@ -191,18 +194,18 @@ func TestSoraGrokUsesAICostCompatibleFieldNames(t *testing.T) {
 	require.NoError(t, err)
 	submit := decodeSoraPluginMap(t, value)
 	body := submit["body"].(map[string]any)
-	assert.Equal(t, []any{"data:image/png;base64,aW1hZ2U=", "https://assets.example/one.png", "https://assets.example/two.png"}, body["images"])
-	assert.Equal(t, "15", body["seconds"])
-	assert.Equal(t, "9:16", body["aspect_ratio"])
+	assert.Equal(t, []any{"https://assets.example/one.png", "https://assets.example/two.png"}, body["reference_images"])
+	assert.Equal(t, []any{"data:image/png;base64,aW1hZ2U="}, body["images_base64"])
+	assert.Equal(t, float64(15), body["duration"])
+	assert.Equal(t, "9:16", body["ratio"])
 	assert.Equal(t, "720p", body["resolution"])
-	assert.Equal(t, []any{"https://assets.example/guide.mp4"}, body["videos"])
-	assert.Equal(t, []any{"https://assets.example/voice.mp3"}, body["audios"])
-	assert.NotContains(t, body, "reference_images")
-	assert.NotContains(t, body, "reference_videos")
-	assert.NotContains(t, body, "audio_reference")
-	assert.NotContains(t, body, "images_base64")
-	assert.NotContains(t, body, "duration")
-	assert.NotContains(t, body, "ratio")
+	assert.Equal(t, []any{"https://assets.example/guide.mp4"}, body["reference_videos"])
+	assert.Equal(t, []any{"https://assets.example/voice.mp3"}, body["audio_reference"])
+	assert.NotContains(t, body, "images")
+	assert.NotContains(t, body, "seconds")
+	assert.NotContains(t, body, "aspect_ratio")
+	assert.NotContains(t, body, "videos")
+	assert.NotContains(t, body, "audios")
 	assert.NotContains(t, submit, "bodyType")
 }
 
@@ -476,6 +479,129 @@ func TestSoraMultipartAllowsRepeatedMediaAndArbitraryFileFields(t *testing.T) {
 	assert.Contains(t, parts, map[string]any{"name": "images", "fileRef": "request_file:images:0", "filename": "one.png"})
 	assert.Contains(t, parts, map[string]any{"name": "images", "fileRef": "request_file:images:1", "filename": "two.png"})
 	assert.Contains(t, parts, map[string]any{"name": "file", "fileRef": "request_file:file:0", "filename": "voice.mp3"})
+}
+
+func TestSoraAICostMultipartSurvivesHTTPAdaptorSerialization(t *testing.T) {
+	type uploadedFile struct {
+		field    string
+		filename string
+		content  string
+	}
+	var capturedValues map[string][]string
+	var capturedFiles []uploadedFile
+	var captureErr error
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		defer request.Body.Close()
+		if err := request.ParseMultipartForm(1 << 20); err != nil {
+			captureErr = err
+			response.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		capturedValues = request.MultipartForm.Value
+		for field, headers := range request.MultipartForm.File {
+			for _, header := range headers {
+				file, err := header.Open()
+				if err != nil {
+					captureErr = err
+					response.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				content, err := io.ReadAll(file)
+				file.Close()
+				if err != nil {
+					captureErr = err
+					response.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				capturedFiles = append(capturedFiles, uploadedFile{field: field, filename: header.Filename, content: string(content)})
+			}
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"id":"mock-upstream-task"}`))
+	}))
+	defer upstream.Close()
+
+	var input bytes.Buffer
+	writer := multipart.NewWriter(&input)
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "model", value: "grok-imagine-video-1.5-preview"},
+		{name: "prompt", value: "animate the references"},
+		{name: "duration", value: "5"},
+		{name: "ratio", value: "9:16"},
+		{name: "reference_videos", value: "https://assets.example/one.mp4"},
+		{name: "reference_videos", value: "https://assets.example/two.mp4"},
+		{name: "audios", value: "https://assets.example/one.mp3"},
+		{name: "audios", value: "https://assets.example/two.mp3"},
+	} {
+		require.NoError(t, writer.WriteField(field.name, field.value))
+	}
+	for _, file := range []uploadedFile{
+		{field: "images", filename: "one.png", content: "image-one"},
+		{field: "images", filename: "two.png", content: "image-two"},
+		{field: "file", filename: "voice.mp3", content: "audio-one"},
+	} {
+		part, err := writer.CreateFormFile(file.field, file.filename)
+		require.NoError(t, err)
+		_, err = io.WriteString(part, file.content)
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(input.Bytes()))
+	context.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	requestBody := map[string]any{
+		"model":            "grok-imagine-video-1.5-preview",
+		"prompt":           "animate the references",
+		"duration":         "5",
+		"ratio":            "9:16",
+		"reference_videos": []any{"https://assets.example/one.mp4", "https://assets.example/two.mp4"},
+		"audios":           []any{"https://assets.example/one.mp3", "https://assets.example/two.mp3"},
+	}
+	context.Set("task_request", requestBody)
+
+	plugin := compileSoraPlugin(t)
+	adaptor := jspluginadaptor.New(plugin)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "grok-imagine-video-1.5-preview",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelBaseUrl:    upstream.URL,
+			ApiKey:            "test-key",
+			UpstreamModelName: "grok-imagine-video-1.5-preview",
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+	adaptor.Init(info)
+	body, err := adaptor.BuildRequestBody(context, info)
+	require.NoError(t, err)
+	requestURL, err := adaptor.BuildRequestURL(info)
+	require.NoError(t, err)
+	outbound, err := http.NewRequest(http.MethodPost, requestURL, body)
+	require.NoError(t, err)
+	require.NoError(t, adaptor.BuildRequestHeader(context, outbound, info))
+	response, err := upstream.Client().Do(outbound)
+	require.NoError(t, err)
+	response.Body.Close()
+	require.NoError(t, captureErr)
+
+	assert.Equal(t, []string{"grok-imagine-video-1.5-preview"}, capturedValues["model"])
+	assert.Equal(t, []string{"5"}, capturedValues["duration"])
+	assert.Equal(t, []string{"9:16"}, capturedValues["ratio"])
+	assert.Equal(t, []string{"https://assets.example/one.mp4", "https://assets.example/two.mp4"}, capturedValues["reference_videos"])
+	assert.Equal(t, []string{"https://assets.example/one.mp3", "https://assets.example/two.mp3"}, capturedValues["audios"])
+	assert.ElementsMatch(t, []uploadedFile{
+		{field: "images", filename: "one.png", content: "image-one"},
+		{field: "images", filename: "two.png", content: "image-two"},
+		{field: "file", filename: "voice.mp3", content: "audio-one"},
+	}, capturedFiles)
+	assert.Empty(t, capturedValues["seconds"])
+	assert.Empty(t, capturedValues["aspect_ratio"])
+	for name := range capturedValues {
+		assert.False(t, strings.HasPrefix(name, "referenceImages"), name)
+	}
 }
 
 func TestSoraOpenAIVideoPreservesDurationFieldNames(t *testing.T) {
