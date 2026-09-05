@@ -7,7 +7,7 @@ export const meta = {
     en: "OpenAI Sora video generation (text-to-video, image-to-video, and remix)",
     zh: "OpenAI Sora 视频生成（文生视频、图生视频、remix）",
   },
-  version: "1.0.10",
+  version: "1.0.13",
   channelTypes: [55, 1], // OpenAI-type channels natively serve sora with the same wire format
   author: { name: "QuantumNous" },
   models: ["sora-2", "sora-2-pro"],
@@ -78,7 +78,7 @@ function responsesVideoText(ctx) {
 
 const mediaFieldRules = [
   {
-    accepted: ["image", "images", "reference_images", "reference_image_urls", "start_frame", "end_frame", "image_reference", "input_reference"],
+    accepted: ["image", "images", "images_base64", "reference_images", "reference_image_urls", "start_frame", "end_frame", "image_reference", "input_reference"],
     aliases: {
       referenceImages: "reference_images",
       image_urls: "reference_image_urls",
@@ -93,7 +93,7 @@ const mediaFieldRules = [
     nested: ["url", "image_url", "image", "source"],
   },
   {
-    accepted: ["video", "videos", "reference_videos", "video_references", "input_video"],
+    accepted: ["video", "videos", "reference_videos", "reference_video_urls", "video_references", "input_video"],
     aliases: {
       referenceVideos: "reference_videos",
       video_urls: "video_references",
@@ -106,7 +106,7 @@ const mediaFieldRules = [
     nested: ["url", "video_url", "video", "source"],
   },
   {
-    accepted: ["audio", "audios", "reference_audios", "audio_references"],
+    accepted: ["audio", "audios", "audios_base64", "audio_reference", "reference_audios", "reference_audio_urls", "audio_references"],
     aliases: {
       referenceAudios: "reference_audios",
       audio_urls: "audio_references",
@@ -143,6 +143,248 @@ function requestValues(req, model) {
   return values;
 }
 
+const providerMediaFields = {
+  images: [
+    "image",
+    "images",
+    "images_base64",
+    "reference_images",
+    "reference_image_urls",
+    "image_reference",
+    "input_reference",
+    "referenceImages",
+    "image_urls",
+    "referenceImageUrls",
+    "image_url",
+    "referenceImage",
+    "reference_image",
+    "imageReference",
+  ],
+  videos: [
+    "video",
+    "videos",
+    "reference_videos",
+    "reference_video_urls",
+    "video_references",
+    "input_video",
+    "referenceVideos",
+    "video_urls",
+    "videoReferences",
+    "video_url",
+    "referenceVideo",
+    "reference_video",
+    "inputVideo",
+  ],
+  audios: [
+    "audio",
+    "audios",
+    "audios_base64",
+    "audio_reference",
+    "reference_audios",
+    "reference_audio_urls",
+    "audio_references",
+    "referenceAudios",
+    "audio_urls",
+    "audioReferences",
+    "audio_url",
+    "referenceAudio",
+    "reference_audio",
+    "input_audio",
+    "inputAudio",
+  ],
+};
+
+const h3AudioReferenceFields = providerMediaFields.audios.filter(function (field) {
+  return field !== "audio";
+});
+
+function upstreamHostname(baseUrl) {
+  return trimmed(baseUrl)
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .split(/[\/?#]/)[0]
+    .split(":")[0];
+}
+
+function isMegabyVideoUpstream(baseUrl) {
+  const host = upstreamHostname(baseUrl);
+  return host === "newapi.megabyai.cc" || host === "ai.772.ee";
+}
+
+function isAICostVideoUpstream(baseUrl) {
+  const host = upstreamHostname(baseUrl);
+  return host === "aicost.me" || host === "www.aicost.me";
+}
+
+function isMiniMaxH3Model(model) {
+  return trimmed(model).toLowerCase().startsWith("minimax-h3");
+}
+
+function removeFields(values, fields, keep) {
+  for (const field of fields) {
+    if (field !== keep) delete values[field];
+  }
+}
+
+function moveMediaReferences(values, fields, target, nestedKeys) {
+  const references = [];
+  for (const field of fields) appendMediaReferences(references, values[field], nestedKeys);
+  if (!references.length) return references;
+  removeFields(values, fields, target);
+  values[target] = references;
+  return references;
+}
+
+function normalizeMegabyVideoRequest(req, model) {
+  const values = requestValues(req, model);
+  if (!hasOwn(values, "duration") && hasOwn(values, "seconds")) {
+    const duration = Number(values.seconds);
+    if (Number.isFinite(duration)) values.duration = duration;
+  }
+  if (hasOwn(values, "duration")) {
+    const duration = Number(values.duration);
+    if (Number.isFinite(duration)) values.duration = duration;
+  }
+  delete values.seconds;
+  if (!hasOwn(values, "ratio") && hasOwn(values, "aspect_ratio")) values.ratio = values.aspect_ratio;
+  delete values.aspect_ratio;
+  moveMediaReferences(values, providerMediaFields.images, "referenceImages", mediaFieldRules[0].nested);
+  moveMediaReferences(values, providerMediaFields.videos, "referenceVideos", mediaFieldRules[1].nested);
+  moveMediaReferences(values, providerMediaFields.audios, "referenceAudios", mediaFieldRules[2].nested);
+  return values;
+}
+
+function normalizeAICostVideoRequest(req, model) {
+  const values = requestValues(req, model);
+  if (!hasOwn(values, "seconds") && hasOwn(values, "duration")) {
+    values.seconds = String(values.duration);
+  }
+  if (hasOwn(values, "seconds")) values.seconds = String(values.seconds);
+  delete values.duration;
+  if (!hasOwn(values, "aspect_ratio") && hasOwn(values, "ratio")) {
+    values.aspect_ratio = values.ratio;
+  }
+  delete values.ratio;
+  moveMediaReferences(values, providerMediaFields.images, "images", mediaFieldRules[0].nested);
+  moveMediaReferences(values, providerMediaFields.videos, "videos", mediaFieldRules[1].nested);
+  moveMediaReferences(values, providerMediaFields.audios, "audios", mediaFieldRules[2].nested);
+  return values;
+}
+
+function parseMetadataObject(value) {
+  if (value === undefined || value === null || value === "") return {};
+  if (typeof value === "string") {
+    let parsed;
+    try {
+      parsed = JSON.parse(value);
+    } catch (_error) {
+      throw new Error("metadata must be a JSON object");
+    }
+    value = parsed;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("metadata must be a JSON object");
+  return Object.assign({}, value);
+}
+
+function h3ContentURL(item, field) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return "";
+  let value = item[field];
+  if (value && typeof value === "object" && !Array.isArray(value)) value = value.url;
+  return trimmed(value);
+}
+
+function appendH3References(content, references, type, role, field) {
+  const seen = [];
+  for (const item of content) {
+    const url = h3ContentURL(item, field);
+    if (url && !seen.includes(url)) seen.push(url);
+  }
+  for (const url of references) {
+    if (seen.includes(url)) continue;
+    const item = { type: type, role: role };
+    item[field] = { url: url };
+    content.push(item);
+    seen.push(url);
+  }
+}
+
+function countH3Roles(content, roles) {
+  return content.filter(function (item) {
+    return item && typeof item === "object" && !Array.isArray(item) && roles.includes(trimmed(item.role));
+  }).length;
+}
+
+function normalizeMiniMaxH3Request(req, model) {
+  const values = requestValues(req, model);
+  if (!hasOwn(values, "seconds") && hasOwn(values, "duration")) values.seconds = String(values.duration);
+  if (hasOwn(values, "seconds")) values.seconds = String(values.seconds);
+  delete values.duration;
+
+  const metadata = parseMetadataObject(values.metadata);
+  const hadContent = metadata.content !== undefined;
+  const content = hadContent ? metadata.content : [];
+  if (!Array.isArray(content)) throw new Error("metadata.content must be an array");
+  const normalizedContent = content.slice();
+
+  const images = [];
+  const videos = [];
+  const audios = [];
+  for (const field of providerMediaFields.images) appendMediaReferences(images, values[field], mediaFieldRules[0].nested);
+  for (const field of providerMediaFields.videos) appendMediaReferences(videos, values[field], mediaFieldRules[1].nested);
+  for (const field of h3AudioReferenceFields) appendMediaReferences(audios, values[field], mediaFieldRules[2].nested);
+  const firstFrames = [];
+  const lastFrames = [];
+  appendMediaReferences(firstFrames, values.start_frame, mediaFieldRules[0].nested);
+  appendMediaReferences(lastFrames, values.end_frame, mediaFieldRules[0].nested);
+
+  const existingFrames = countH3Roles(normalizedContent, ["first_frame", "last_frame"]);
+  const existingReferences = countH3Roles(normalizedContent, ["reference_image", "reference_video", "reference_audio"]);
+  if ((firstFrames.length || lastFrames.length || existingFrames) && (images.length || videos.length || audios.length || existingReferences)) {
+    throw new Error("MiniMax H3 first/last frames cannot be mixed with reference media");
+  }
+
+  appendH3References(normalizedContent, images, "image_url", "reference_image", "image_url");
+  appendH3References(normalizedContent, videos, "video_url", "reference_video", "video_url");
+  appendH3References(normalizedContent, audios, "audio_url", "reference_audio", "audio_url");
+  appendH3References(normalizedContent, firstFrames, "image_url", "first_frame", "image_url");
+  appendH3References(normalizedContent, lastFrames, "image_url", "last_frame", "image_url");
+
+  if (countH3Roles(normalizedContent, ["reference_image"]) > 9) throw new Error("MiniMax H3 supports at most 9 reference images");
+  if (countH3Roles(normalizedContent, ["reference_video"]) > 3) throw new Error("MiniMax H3 supports at most 3 reference videos");
+  if (countH3Roles(normalizedContent, ["reference_audio"]) > 3) throw new Error("MiniMax H3 supports at most 3 reference audios");
+
+  removeFields(values, providerMediaFields.images, "");
+  removeFields(values, providerMediaFields.videos, "");
+  removeFields(values, h3AudioReferenceFields, "");
+  delete values.start_frame;
+  delete values.end_frame;
+  if (normalizedContent.length || hadContent) metadata.content = normalizedContent;
+  else delete metadata.content;
+  if (metadata.ratio === undefined) metadata.ratio = values.ratio === undefined ? values.aspect_ratio : values.ratio;
+  if (metadata.resolution === undefined && values.resolution !== undefined) metadata.resolution = values.resolution;
+  for (const key of Object.keys(metadata)) {
+    if (metadata[key] === undefined) delete metadata[key];
+  }
+  if (Object.keys(metadata).length) values.metadata = metadata;
+  else delete values.metadata;
+  return values;
+}
+
+function upstreamRequestValues(ctx) {
+  const req = ctx.requestBody || {};
+  const model = ctx.upstreamModel;
+  if (isMiniMaxH3Model(model)) return normalizeMiniMaxH3Request(req, model);
+  if (isMegabyVideoUpstream(ctx.baseUrl)) return normalizeMegabyVideoRequest(req, model);
+  if (isAICostVideoUpstream(ctx.baseUrl)) return normalizeAICostVideoRequest(req, model);
+  return requestValues(req, model);
+}
+
+function clientSentMultipart(ctx) {
+  const headers = ctx.requestHeaders || {};
+  const contentType = headers["Content-Type"] || headers["content-type"] || "";
+  return trimmed(contentType).toLowerCase().startsWith("multipart/form-data");
+}
+
 function hasOwn(value, key) {
   return Object.prototype.hasOwnProperty.call(value || {}, key);
 }
@@ -169,19 +411,26 @@ function copyVideoExtensions(source, target) {
 
 function hasImageReference(req, hasInputReferenceFile) {
   if (hasInputReferenceFile) return true;
+  let metadata = req && req.metadata;
+  if (typeof metadata === "string") {
+    try {
+      metadata = JSON.parse(metadata);
+    } catch (_error) {
+      metadata = null;
+    }
+  }
+  if (metadata && Array.isArray(metadata.content)) {
+    const hasMetadataImage = metadata.content.some(function (item) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+      return trimmed(item.type) === "image_url" || ["reference_image", "first_frame", "last_frame"].includes(trimmed(item.role));
+    });
+    if (hasMetadataImage) return true;
+  }
   const rule = mediaFieldRules[0];
   return rule.accepted.concat(Object.keys(rule.aliases)).some(function (key) {
     const references = [];
     appendMediaReferences(references, req && req[key], rule.nested);
     return references.length > 0;
-  });
-}
-
-function hasMediaField(req) {
-  return mediaFieldRules.some(function (rule) {
-    return rule.accepted.concat(Object.keys(rule.aliases)).some(function (key) {
-      return hasOwn(req, key);
-    });
   });
 }
 
@@ -194,9 +443,9 @@ export function buildSubmitRequest(ctx) {
     headers["Content-Type"] = "application/json";
     return { url: ctx.baseUrl + "/v1/videos/" + ctx.originTaskId + "/remix", method: "POST", headers, body: requestValues(req, ctx.upstreamModel), action };
   }
-  if ((ctx.files || []).length || hasMediaField(req)) {
+  const values = upstreamRequestValues(ctx);
+  if ((ctx.files || []).length || clientSentMultipart(ctx)) {
     const parts = [];
-    const values = requestValues(req, ctx.upstreamModel);
     for (const key of Object.keys(values)) {
       if (Array.isArray(values[key])) {
         for (const item of values[key]) {
@@ -212,7 +461,7 @@ export function buildSubmitRequest(ctx) {
     return { url: ctx.baseUrl + "/v1/videos", method: "POST", headers, bodyType: "multipart", parts };
   }
   headers["Content-Type"] = "application/json";
-  return { url: ctx.baseUrl + "/v1/videos", method: "POST", headers, body: requestValues(req, ctx.upstreamModel) };
+  return { url: ctx.baseUrl + "/v1/videos", method: "POST", headers, body: values };
 }
 
 export function parseSubmitResponse(ctx, resp) {
