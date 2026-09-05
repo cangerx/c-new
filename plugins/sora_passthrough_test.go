@@ -1,11 +1,18 @@
 package plugins_test
 
 import (
+	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	builtinplugins "github.com/QuantumNous/new-api/plugins"
+	jspluginadaptor "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -87,6 +94,69 @@ func TestSoraOpenAIVideoExpandsVendorMediaReferenceAliases(t *testing.T) {
 	for _, key := range []string{"audio", "audio_url", "referenceAudio", "reference_audio", "input_audio"} {
 		assert.Equal(t, audios[0], submitBody[key], key)
 	}
+}
+
+func TestSoraReferenceMediaSurviveHTTPAdaptorSerialization(t *testing.T) {
+	var captured map[string]any
+	var captureErr error
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		defer request.Body.Close()
+		body, err := io.ReadAll(request.Body)
+		if err == nil {
+			err = common.Unmarshal(body, &captured)
+		}
+		captureErr = err
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"id":"mock-upstream-task"}`))
+	}))
+	defer upstream.Close()
+
+	plugin := compileSoraPlugin(t)
+	adaptor := jspluginadaptor.New(plugin)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "alibaba/wan-3.0-720p",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelBaseUrl:    upstream.URL,
+			ApiKey:            "test-key",
+			UpstreamModelName: "alibaba/wan-3.0-720p",
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+	adaptor.Init(info)
+	requestBody := map[string]any{
+		"model":           "alibaba/wan-3.0-720p",
+		"prompt":          "simulate reference transmission",
+		"duration":        5,
+		"referenceImages": []any{"https://assets.example/one.png", "https://assets.example/two.png"},
+		"referenceVideos": []any{"https://assets.example/guide.mp4"},
+		"referenceAudios": []any{"https://assets.example/voice.mp3"},
+	}
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(nil))
+	context.Request.Header.Set("Content-Type", "application/json")
+	context.Set("task_request", requestBody)
+
+	body, err := adaptor.BuildRequestBody(context, info)
+	require.NoError(t, err)
+	requestURL, err := adaptor.BuildRequestURL(info)
+	require.NoError(t, err)
+	outbound, err := http.NewRequest(http.MethodPost, requestURL, body)
+	require.NoError(t, err)
+	require.NoError(t, adaptor.BuildRequestHeader(context, outbound, info))
+	response, err := upstream.Client().Do(outbound)
+	require.NoError(t, err)
+	response.Body.Close()
+	require.NoError(t, captureErr)
+
+	assert.Equal(t, requestBody["referenceImages"], captured["referenceImages"])
+	assert.Equal(t, requestBody["referenceImages"], captured["reference_images"])
+	assert.Equal(t, "https://assets.example/one.png", captured["input_reference"])
+	assert.Equal(t, requestBody["referenceVideos"], captured["referenceVideos"])
+	assert.Equal(t, requestBody["referenceVideos"], captured["reference_videos"])
+	assert.Equal(t, "https://assets.example/guide.mp4", captured["video_url"])
+	assert.Equal(t, requestBody["referenceAudios"], captured["referenceAudios"])
+	assert.Equal(t, requestBody["referenceAudios"], captured["reference_audios"])
+	assert.Equal(t, "https://assets.example/voice.mp3", captured["audio_url"])
 }
 
 func TestSoraSubmitNormalizesAllImageArrayAliases(t *testing.T) {
