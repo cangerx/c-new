@@ -35,7 +35,7 @@ func decodeSoraPluginMap(t *testing.T, value any) map[string]any {
 	return decoded
 }
 
-func TestSoraOpenAIVideoExpandsVendorMediaReferenceAliases(t *testing.T) {
+func TestSoraOpenAIVideoMapsVendorMediaAliasesOnce(t *testing.T) {
 	plugin := compileSoraPlugin(t)
 	references := []any{"https://assets.example/one.png", "https://assets.example/two.png"}
 	videos := []any{"https://assets.example/guide.mp4"}
@@ -76,23 +76,11 @@ func TestSoraOpenAIVideoExpandsVendorMediaReferenceAliases(t *testing.T) {
 	require.NoError(t, err)
 	submit := decodeSoraPluginMap(t, submitValue)
 	submitBody := submit["body"].(map[string]any)
-	for _, key := range []string{"images", "referenceImages", "reference_images", "image_urls"} {
-		assert.Equal(t, references, submitBody[key], key)
-	}
-	for _, key := range []string{"input_reference", "image", "image_url", "referenceImage", "reference_image"} {
-		assert.Equal(t, references[0], submitBody[key], key)
-	}
-	for _, key := range []string{"videos", "referenceVideos", "reference_videos", "video_urls"} {
-		assert.Equal(t, videos, submitBody[key], key)
-	}
-	for _, key := range []string{"video", "video_url", "referenceVideo", "reference_video", "input_video"} {
-		assert.Equal(t, videos[0], submitBody[key], key)
-	}
-	for _, key := range []string{"audios", "referenceAudios", "reference_audios", "audio_urls"} {
-		assert.Equal(t, audios, submitBody[key], key)
-	}
-	for _, key := range []string{"audio", "audio_url", "referenceAudio", "reference_audio", "input_audio"} {
-		assert.Equal(t, audios[0], submitBody[key], key)
+	assert.Equal(t, references, submitBody["reference_images"])
+	assert.Equal(t, videos, submitBody["reference_videos"])
+	assert.Equal(t, audios, submitBody["reference_audios"])
+	for _, key := range []string{"images", "referenceImages", "image_urls", "input_reference", "image", "image_url", "videos", "referenceVideos", "video_urls", "video", "audios", "referenceAudios", "audio_urls", "audio"} {
+		assert.NotContains(t, submitBody, key)
 	}
 }
 
@@ -114,17 +102,17 @@ func TestSoraReferenceMediaSurviveHTTPAdaptorSerialization(t *testing.T) {
 	plugin := compileSoraPlugin(t)
 	adaptor := jspluginadaptor.New(plugin)
 	info := &relaycommon.RelayInfo{
-		OriginModelName: "alibaba/wan-3.0-720p",
+		OriginModelName: "grok-imagine-video-1.5-preview",
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ChannelBaseUrl:    upstream.URL,
 			ApiKey:            "test-key",
-			UpstreamModelName: "alibaba/wan-3.0-720p",
+			UpstreamModelName: "grok-imagine-video-1.5-preview",
 		},
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
 	}
 	adaptor.Init(info)
 	requestBody := map[string]any{
-		"model":           "alibaba/wan-3.0-720p",
+		"model":           "grok-imagine-video-1.5-preview",
 		"prompt":          "simulate reference transmission",
 		"duration":        5,
 		"referenceImages": []any{"https://assets.example/one.png", "https://assets.example/two.png"},
@@ -148,15 +136,12 @@ func TestSoraReferenceMediaSurviveHTTPAdaptorSerialization(t *testing.T) {
 	response.Body.Close()
 	require.NoError(t, captureErr)
 
-	assert.Equal(t, requestBody["referenceImages"], captured["referenceImages"])
 	assert.Equal(t, requestBody["referenceImages"], captured["reference_images"])
-	assert.Equal(t, "https://assets.example/one.png", captured["input_reference"])
-	assert.Equal(t, requestBody["referenceVideos"], captured["referenceVideos"])
 	assert.Equal(t, requestBody["referenceVideos"], captured["reference_videos"])
-	assert.Equal(t, "https://assets.example/guide.mp4", captured["video_url"])
-	assert.Equal(t, requestBody["referenceAudios"], captured["referenceAudios"])
 	assert.Equal(t, requestBody["referenceAudios"], captured["reference_audios"])
-	assert.Equal(t, "https://assets.example/voice.mp3", captured["audio_url"])
+	for _, key := range []string{"referenceImages", "images", "input_reference", "referenceVideos", "videos", "video_url", "referenceAudios", "audios", "audio_url"} {
+		assert.NotContains(t, captured, key)
+	}
 }
 
 func TestSoraSubmitNormalizesAllImageArrayAliases(t *testing.T) {
@@ -179,16 +164,12 @@ func TestSoraSubmitNormalizesAllImageArrayAliases(t *testing.T) {
 	require.NoError(t, err)
 	submit := decodeSoraPluginMap(t, value)
 	body := submit["body"].(map[string]any)
-	assert.Equal(t, []any{
-		"https://assets.example/one.png",
-		"https://assets.example/two.png",
-		"https://assets.example/three.png",
-		"https://assets.example/four.png",
-	}, body["images"])
-	for _, key := range []string{"images", "referenceImages", "reference_images", "image_urls"} {
-		assert.Equal(t, body["images"], body[key], key)
+	assert.Equal(t, []any{"https://assets.example/one.png"}, body["images"])
+	assert.Equal(t, []any{"https://assets.example/three.png", "https://assets.example/two.png"}, body["reference_images"])
+	assert.Equal(t, []any{"https://assets.example/one.png", "https://assets.example/four.png"}, body["reference_image_urls"])
+	for _, key := range []string{"referenceImages", "image_urls", "input_reference", "image"} {
+		assert.NotContains(t, body, key)
 	}
-	assert.Equal(t, "https://assets.example/one.png", body["input_reference"])
 }
 
 func TestSoraSubmitNormalizesVideoAndAudioArrayAliases(t *testing.T) {
@@ -207,14 +188,12 @@ func TestSoraSubmitNormalizesVideoAndAudioArrayAliases(t *testing.T) {
 	})
 	require.NoError(t, err)
 	body := decodeSoraPluginMap(t, value)["body"].(map[string]any)
-	for _, key := range []string{"videos", "referenceVideos", "reference_videos", "video_urls"} {
-		assert.Equal(t, []any{"https://assets.example/one.mp4", "https://assets.example/two.mp4"}, body[key], key)
+	assert.Equal(t, []any{"https://assets.example/two.mp4", "https://assets.example/one.mp4"}, body["reference_videos"])
+	assert.Equal(t, []any{"https://assets.example/one.mp3"}, body["audio_references"])
+	assert.Equal(t, []any{"https://assets.example/two.mp3"}, body["reference_audios"])
+	for _, key := range []string{"referenceVideos", "video_urls", "videos", "video_url", "referenceAudios", "audio_urls", "audios", "audio_url"} {
+		assert.NotContains(t, body, key)
 	}
-	assert.Equal(t, "https://assets.example/one.mp4", body["video_url"])
-	for _, key := range []string{"audios", "referenceAudios", "reference_audios", "audio_urls"} {
-		assert.Equal(t, []any{"https://assets.example/two.mp3", "https://assets.example/one.mp3"}, body[key], key)
-	}
-	assert.Equal(t, "https://assets.example/two.mp3", body["audio_url"])
 }
 
 func TestSoraMultipartWritesNormalizedImageURLs(t *testing.T) {
@@ -242,23 +221,101 @@ func TestSoraMultipartWritesNormalizedImageURLs(t *testing.T) {
 	submit := decodeSoraPluginMap(t, value)
 	assert.Equal(t, "multipart", submit["bodyType"])
 	parts := submit["parts"].([]any)
-	for _, key := range []string{"images", "referenceImages", "reference_images", "image_urls"} {
-		assert.Contains(t, parts, map[string]any{"name": key, "value": "https://assets.example/one.png"})
-		assert.Contains(t, parts, map[string]any{"name": key, "value": "https://assets.example/two.png"})
-	}
-	assert.NotContains(t, parts, map[string]any{"name": "input_reference", "value": "https://assets.example/one.png"})
-	assert.Contains(t, parts, map[string]any{"name": "image_url", "value": "https://assets.example/one.png"})
-	for _, key := range []string{"videos", "referenceVideos", "reference_videos", "video_urls"} {
-		assert.Contains(t, parts, map[string]any{"name": key, "value": "https://assets.example/guide.mp4"})
-	}
-	for _, key := range []string{"audios", "referenceAudios", "reference_audios", "audio_urls"} {
-		assert.Contains(t, parts, map[string]any{"name": key, "value": "https://assets.example/voice.mp3"})
+	assert.Contains(t, parts, map[string]any{"name": "reference_images", "value": "https://assets.example/one.png"})
+	assert.Contains(t, parts, map[string]any{"name": "reference_images", "value": "https://assets.example/two.png"})
+	assert.Contains(t, parts, map[string]any{"name": "reference_videos", "value": "https://assets.example/guide.mp4"})
+	assert.Contains(t, parts, map[string]any{"name": "reference_audios", "value": "https://assets.example/voice.mp3"})
+	for _, key := range []string{"images", "referenceImages", "image_urls", "referenceVideos", "video_urls", "referenceAudios", "audio_urls"} {
+		for _, part := range parts {
+			assert.NotEqual(t, key, part.(map[string]any)["name"])
+		}
 	}
 	assert.Contains(t, parts, map[string]any{
 		"name":     "input_reference",
 		"fileRef":  "request_file:input_reference",
 		"filename": "frame.png",
 	})
+}
+
+func TestSoraPreservesKnownUpstreamMediaFields(t *testing.T) {
+	plugin := compileSoraPlugin(t)
+	request := map[string]any{
+		"prompt":               "animate",
+		"image":                "https://assets.example/image.png",
+		"images":               []any{"https://assets.example/one.png", "https://assets.example/two.png"},
+		"reference_images":     []any{"https://assets.example/reference.png"},
+		"reference_image_urls": []any{"https://assets.example/reference-url.png"},
+		"start_frame":          "https://assets.example/start.png",
+		"end_frame":            "https://assets.example/end.png",
+		"image_reference":      "https://assets.example/image-reference.png",
+		"input_reference":      "https://assets.example/input-reference.png",
+		"video":                "https://assets.example/video.mp4",
+		"videos":               []any{"https://assets.example/one.mp4", "https://assets.example/two.mp4"},
+		"reference_videos":     []any{"https://assets.example/reference.mp4"},
+		"video_references":     []any{"https://assets.example/video-reference.mp4"},
+		"input_video":          "https://assets.example/input.mp4",
+		"audio":                "https://assets.example/audio.mp3",
+		"audios":               []any{"https://assets.example/one.mp3", "https://assets.example/two.mp3"},
+		"reference_audios":     []any{"https://assets.example/reference.mp3"},
+		"audio_references":     []any{"https://assets.example/audio-reference.mp3"},
+	}
+	value, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
+		"baseUrl":       "https://provider.example",
+		"apiKey":        "secret",
+		"upstreamModel": "grok-imagine-video-1.5-preview",
+		"requestBody":   request,
+	})
+	require.NoError(t, err)
+	body := decodeSoraPluginMap(t, value)["body"].(map[string]any)
+	for key, expected := range request {
+		assert.Equal(t, expected, body[key], key)
+	}
+	assert.Equal(t, "grok-imagine-video-1.5-preview", body["model"])
+}
+
+func TestSoraMultipartAllowsRepeatedMediaAndArbitraryFileFields(t *testing.T) {
+	plugin := compileSoraPlugin(t)
+	files := []any{
+		map[string]any{"ref": "request_file:images:0", "field": "images", "filename": "one.png", "mimeType": "image/png", "size": 12},
+		map[string]any{"ref": "request_file:images:1", "field": "images", "filename": "two.png", "mimeType": "image/png", "size": 12},
+		map[string]any{"ref": "request_file:file:0", "field": "file", "filename": "voice.mp3", "mimeType": "audio/mpeg", "size": 12},
+	}
+	value, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"}, map[string]any{
+		"model":         "grok-imagine-video-1.5-preview",
+		"upstreamModel": "grok-imagine-video-1.5-preview",
+		"body": map[string]any{
+			"kind": "multipart",
+			"fields": map[string]any{
+				"prompt": []any{"animate"},
+				"images": []any{"https://assets.example/one.png", "https://assets.example/two.png"},
+				"audios": []any{"https://assets.example/one.mp3", "https://assets.example/two.mp3"},
+			},
+			"files": files,
+		},
+	})
+	require.NoError(t, err)
+	resolved := decodeSoraPluginMap(t, value)
+	assert.Equal(t, "image_to_video", resolved["action"])
+	body := resolved["requestBody"].(map[string]any)
+	assert.Equal(t, []any{"https://assets.example/one.png", "https://assets.example/two.png"}, body["images"])
+	assert.Equal(t, []any{"https://assets.example/one.mp3", "https://assets.example/two.mp3"}, body["audios"])
+
+	submitValue, err := plugin.Engine.Call(t.Context(), "buildSubmitRequest", map[string]any{
+		"baseUrl":       "https://provider.example",
+		"apiKey":        "secret",
+		"upstreamModel": "grok-imagine-video-1.5-preview",
+		"requestBody":   body,
+		"files":         files,
+	})
+	require.NoError(t, err)
+	parts := decodeSoraPluginMap(t, submitValue)["parts"].([]any)
+	assert.Contains(t, parts, map[string]any{"name": "images", "value": "https://assets.example/one.png"})
+	assert.Contains(t, parts, map[string]any{"name": "images", "value": "https://assets.example/two.png"})
+	assert.Contains(t, parts, map[string]any{"name": "audios", "value": "https://assets.example/one.mp3"})
+	assert.Contains(t, parts, map[string]any{"name": "audios", "value": "https://assets.example/two.mp3"})
+	assert.Contains(t, parts, map[string]any{"name": "images", "fileRef": "request_file:images:0", "filename": "one.png"})
+	assert.Contains(t, parts, map[string]any{"name": "images", "fileRef": "request_file:images:1", "filename": "two.png"})
+	assert.Contains(t, parts, map[string]any{"name": "file", "fileRef": "request_file:file:0", "filename": "voice.mp3"})
 }
 
 func TestSoraDurationUsesNativeOrVendorWireFormat(t *testing.T) {
@@ -332,7 +389,7 @@ func TestSoraResponsesPreservesAllInputImages(t *testing.T) {
 	resolved := decodeSoraPluginMap(t, value)
 	body := resolved["requestBody"].(map[string]any)
 	assert.Equal(t, "image_to_video", resolved["action"])
-	assert.Equal(t, "https://assets.example/one.png", body["input_reference"])
+	assert.NotContains(t, body, "input_reference")
 	assert.Equal(t, []any{"https://assets.example/one.png", "https://assets.example/two.png"}, body["images"])
 }
 

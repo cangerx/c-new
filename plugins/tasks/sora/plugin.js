@@ -7,7 +7,7 @@ export const meta = {
     en: "OpenAI Sora video generation (text-to-video, image-to-video, and remix)",
     zh: "OpenAI Sora 视频生成（文生视频、图生视频、remix）",
   },
-  version: "1.0.7",
+  version: "1.0.8",
   channelTypes: [55, 1], // OpenAI-type channels natively serve sora with the same wire format
   author: { name: "QuantumNous" },
   models: ["sora-2", "sora-2-pro"],
@@ -76,20 +76,47 @@ function responsesVideoText(ctx) {
   return '<video controls src="' + escaped + '"></video>';
 }
 
-const referenceFieldGroups = [
+const mediaFieldRules = [
   {
-    fields: ["images", "referenceImages", "reference_images", "image_urls"],
-    singular: ["input_reference", "image", "image_url", "referenceImage", "reference_image"],
+    accepted: ["image", "images", "reference_images", "reference_image_urls", "start_frame", "end_frame", "image_reference", "input_reference"],
+    aliases: {
+      referenceImages: "reference_images",
+      image_urls: "reference_image_urls",
+      referenceImageUrls: "reference_image_urls",
+      image_url: "image",
+      referenceImage: "image_reference",
+      reference_image: "image_reference",
+      imageReference: "image_reference",
+      startFrame: "start_frame",
+      endFrame: "end_frame",
+    },
     nested: ["url", "image_url", "image", "source"],
   },
   {
-    fields: ["videos", "referenceVideos", "reference_videos", "video_urls"],
-    singular: ["video", "video_url", "referenceVideo", "reference_video", "input_video"],
+    accepted: ["video", "videos", "reference_videos", "video_references", "input_video"],
+    aliases: {
+      referenceVideos: "reference_videos",
+      video_urls: "video_references",
+      videoReferences: "video_references",
+      video_url: "video",
+      referenceVideo: "video",
+      reference_video: "video",
+      inputVideo: "input_video",
+    },
     nested: ["url", "video_url", "video", "source"],
   },
   {
-    fields: ["audios", "referenceAudios", "reference_audios", "audio_urls"],
-    singular: ["audio", "audio_url", "referenceAudio", "reference_audio", "input_audio"],
+    accepted: ["audio", "audios", "reference_audios", "audio_references"],
+    aliases: {
+      referenceAudios: "reference_audios",
+      audio_urls: "audio_references",
+      audioReferences: "audio_references",
+      audio_url: "audio",
+      referenceAudio: "audio",
+      reference_audio: "audio",
+      input_audio: "audio",
+      inputAudio: "audio",
+    },
     nested: ["url", "audio_url", "audio", "source"],
   },
 ];
@@ -112,14 +139,20 @@ function appendMediaReferences(target, value, nestedKeys) {
 
 function normalizeReferenceFields(req) {
   const values = Object.assign({}, req || {});
-  for (const group of referenceFieldGroups) {
-    const references = [];
-    for (const key of group.fields) appendMediaReferences(references, values[key], group.nested);
-    for (const key of group.singular) appendMediaReferences(references, values[key], group.nested);
-    if (!references.length) continue;
-    for (const key of group.fields) values[key] = references;
-    for (const key of group.singular) {
-      if (!hasOwn(values, key)) values[key] = references[0];
+  for (const rule of mediaFieldRules) {
+    for (const alias of Object.keys(rule.aliases)) {
+      if (!hasOwn(values, alias)) continue;
+      const target = rule.aliases[alias];
+      const references = [];
+      appendMediaReferences(references, values[target], rule.nested);
+      appendMediaReferences(references, values[alias], rule.nested);
+      if (references.length) {
+        const plural = ["images", "reference_images", "reference_image_urls", "videos", "reference_videos", "video_references", "audios", "reference_audios", "audio_references"].includes(target);
+        values[target] = plural || references.length > 1 ? references : references[0];
+      } else if (!hasOwn(values, target)) {
+        values[target] = values[alias];
+      }
+      delete values[alias];
     }
   }
   return values;
@@ -131,9 +164,9 @@ function requestValues(req, model) {
   return values;
 }
 
-function isReferenceArrayField(key) {
-  return referenceFieldGroups.some(function (group) {
-    return group.fields.includes(key);
+function isMediaField(key) {
+  return mediaFieldRules.some(function (rule) {
+    return rule.accepted.includes(key) || hasOwn(rule.aliases, key);
   });
 }
 
@@ -171,35 +204,32 @@ function normalizeDurationFields(req, upstreamModel) {
 }
 
 function copyVideoExtensions(source, target) {
-  for (const key of [
+  const keys = [
     "ratio",
     "resolution",
-    "images",
-    "referenceImages",
-    "reference_images",
-    "image_urls",
-    "videos",
-    "referenceVideos",
-    "reference_videos",
-    "video_urls",
-    "audios",
-    "referenceAudios",
-    "reference_audios",
-    "audio_urls",
     "aspect_ratio",
     "seed",
     "negative_prompt",
     "watermark",
     "generate_audio",
-  ]) {
+  ];
+  for (const rule of mediaFieldRules) {
+    for (const key of rule.accepted.concat(Object.keys(rule.aliases))) {
+      if (!keys.includes(key)) keys.push(key);
+    }
+  }
+  for (const key of keys) {
     if (hasOwn(source, key)) target[key] = source[key];
   }
 }
 
 function hasImageReference(req, hasInputReferenceFile) {
-  if (hasInputReferenceFile || trimmed(req && req.input_reference) || trimmed(req && req.image)) return true;
-  return [req && req.images, req && req.referenceImages, req && req.reference_images, req && req.image_urls].some(function (images) {
-    return Array.isArray(images) && images.length > 0;
+  if (hasInputReferenceFile) return true;
+  const rule = mediaFieldRules[0];
+  return rule.accepted.concat(Object.keys(rule.aliases)).some(function (key) {
+    const references = [];
+    appendMediaReferences(references, req && req[key], rule.nested);
+    return references.length > 0;
   });
 }
 
@@ -216,8 +246,7 @@ export function buildSubmitRequest(ctx) {
     const parts = [];
     const values = requestValues(req, ctx.upstreamModel);
     for (const key of Object.keys(values)) {
-      if ((ctx.files || []).some(function (file) { return file.field === key; })) continue;
-      if (isReferenceArrayField(key) && Array.isArray(values[key])) {
+      if (isMediaField(key) && Array.isArray(values[key])) {
         for (const reference of values[key]) parts.push({ name: key, value: reference });
         continue;
       }
@@ -326,19 +355,15 @@ export const protocols = {
       const input = responsesInput(req);
       const prompt = input.prompt || trimmed(req.prompt);
       if (!prompt) throw new Error("input is required");
-      const images = [];
-      for (const image of [req.image, req.input_reference].concat(req.images || [], input.images)) {
-        if (trimmed(image) && !images.includes(trimmed(image))) images.push(trimmed(image));
-      }
       const requestBody = { model: model, prompt: prompt };
-      if (images.length) requestBody.input_reference = images[0];
+      if (input.images.length) requestBody.images = input.images;
       if (hasOwn(req, "seconds")) requestBody.seconds = req.seconds;
       else if (hasOwn(req, "duration")) requestBody.duration = req.duration;
       if (hasOwn(req, "size")) requestBody.size = req.size;
       if (hasOwn(req, "metadata")) requestBody.metadata = req.metadata;
       copyVideoExtensions(req, requestBody);
       normalizeDurationFields(requestBody, ctx.upstreamModel || model);
-      return { kind: "submit", model: model, action: images.length || hasImageReference(req, false) ? "image_to_video" : "text_to_video", requestBody: requestBody };
+      return { kind: "submit", model: model, action: hasImageReference(requestBody, false) ? "image_to_video" : "text_to_video", requestBody: requestBody };
     },
     renderEvents: function (ctx, task, previousState) {
       const status = String(task.status || "UNKNOWN").toUpperCase();
@@ -418,13 +443,15 @@ protocols.openai_video = {
     const req = {};
     const fields = ctx.body.fields || {};
     for (const name of Object.keys(fields)) {
-      req[name] = isReferenceArrayField(name) ? fields[name].slice() : first(name);
+      const values = fields[name] || [];
+      req[name] = isMediaField(name) && values.length > 1 ? values.slice() : first(name);
     }
-    let hasInputReferenceFile = false;
+    let hasImageReferenceFile = false;
     for (const file of ctx.body.files || []) {
-      if (file.field !== "input_reference") throw new Error("unexpected file field: " + file.field);
-      if (hasInputReferenceFile) throw new Error("input_reference must be provided once");
-      hasInputReferenceFile = true;
+      const mimeType = trimmed(file.mimeType).toLowerCase();
+      if (mediaFieldRules[0].accepted.includes(file.field) || hasOwn(mediaFieldRules[0].aliases, file.field) || mimeType.startsWith("image/")) {
+        hasImageReferenceFile = true;
+      }
     }
     if (req.metadata !== undefined) {
       let parsed;
@@ -445,7 +472,7 @@ protocols.openai_video = {
     return {
       kind: "submit",
       model: ctx.model,
-      action: hasImageReference(req, hasInputReferenceFile) ? "image_to_video" : "text_to_video",
+      action: hasImageReference(req, hasImageReferenceFile) ? "image_to_video" : "text_to_video",
       requestBody: Object.assign({}, req, { model: ctx.model }),
     };
   },

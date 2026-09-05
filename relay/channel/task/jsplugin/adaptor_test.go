@@ -116,6 +116,68 @@ export function parseSubmitResponse(ctx,r){return {taskId:"1"}} export function 
 	assert.Equal(t, "image-bytes", string(content))
 }
 
+func TestTaskAdaptorBuildsDistinctRepeatedMultipartFiles(t *testing.T) {
+	source := `
+export const meta = {apiVersion:1,key:"multipart-repeated",name:"Multipart Repeated",version:"1.0.0",author:{name:"Test"},models:["m"],fetchMode:"per_task"};
+export function buildSubmitRequest(ctx) {
+  const parts = [];
+  for (const file of ctx.files) parts.push({name:file.field,fileRef:file.ref,filename:file.filename});
+  return {url:ctx.baseUrl+"/submit",bodyType:"multipart",parts:parts};
+}
+export function parseSubmitResponse(){return {taskId:"1"}} export function buildQueryRequest(){return {url:"https://example.com"}} export function parseTaskResult(){return {status:"SUCCESS"}}
+`
+	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+	require.NoError(t, err)
+	adaptor := New(plugin)
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://provider.example"}, TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+	adaptor.Init(info)
+	var input bytes.Buffer
+	writer := multipart.NewWriter(&input)
+	for _, item := range []struct {
+		field    string
+		filename string
+		content  string
+	}{
+		{field: "images", filename: "one.png", content: "image-one"},
+		{field: "images", filename: "two.png", content: "image-two"},
+		{field: "file", filename: "voice.mp3", content: "audio-one"},
+	} {
+		file, createErr := writer.CreateFormFile(item.field, item.filename)
+		require.NoError(t, createErr)
+		_, createErr = file.Write([]byte(item.content))
+		require.NoError(t, createErr)
+	}
+	require.NoError(t, writer.Close())
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(input.Bytes()))
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	c.Set("task_request", map[string]any{"prompt": "p"})
+
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	requestBytes, err := io.ReadAll(body)
+	require.NoError(t, err)
+	reader := multipart.NewReader(bytes.NewReader(requestBytes), strings.TrimPrefix(c.GetHeader("Content-Type"), "multipart/form-data; boundary="))
+	form, err := reader.ReadForm(1024)
+	require.NoError(t, err)
+	require.Len(t, form.File["images"], 2)
+	require.Len(t, form.File["file"], 1)
+	for index, expected := range []string{"image-one", "image-two"} {
+		opened, openErr := form.File["images"][index].Open()
+		require.NoError(t, openErr)
+		content, readErr := io.ReadAll(opened)
+		opened.Close()
+		require.NoError(t, readErr)
+		assert.Equal(t, expected, string(content))
+	}
+	opened, err := form.File["file"][0].Open()
+	require.NoError(t, err)
+	content, err := io.ReadAll(opened)
+	opened.Close()
+	require.NoError(t, err)
+	assert.Equal(t, "audio-one", string(content))
+}
+
 func TestTaskAdaptorInlinesJSONFilePlaceholders(t *testing.T) {
 	const fileBytes = "image-bytes"
 	encoded := base64.StdEncoding.EncodeToString([]byte(fileBytes))

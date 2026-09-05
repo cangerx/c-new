@@ -245,28 +245,27 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 				}
 				continue
 			}
-			field := strings.TrimPrefix(part.FileRef, "request_file:")
-			files := form.File[field]
-			if len(files) == 0 {
-				return nil, fmt.Errorf("unknown file reference %q", part.FileRef)
+			fileHeader, lookupErr := resolveRequestFile(form, part.FileRef)
+			if lookupErr != nil {
+				return nil, lookupErr
 			}
-			file, openErr := files[0].Open()
+			file, openErr := fileHeader.Open()
 			if openErr != nil {
 				return nil, openErr
 			}
 			filename := part.Filename
 			if filename == "" {
-				filename = files[0].Filename
+				filename = fileHeader.Filename
 			}
-			header := make(textproto.MIMEHeader)
+			partHeader := make(textproto.MIMEHeader)
 			disposition := mime.FormatMediaType("form-data", map[string]string{"name": part.Name, "filename": filename})
 			if disposition == "" {
 				file.Close()
 				return nil, fmt.Errorf("invalid multipart name or filename")
 			}
-			header.Set("Content-Disposition", disposition)
-			header.Set("Content-Type", files[0].Header.Get("Content-Type"))
-			destination, copyErr := writer.CreatePart(header)
+			partHeader.Set("Content-Disposition", disposition)
+			partHeader.Set("Content-Type", fileHeader.Header.Get("Content-Type"))
+			destination, copyErr := writer.CreatePart(partHeader)
 			if copyErr == nil {
 				_, copyErr = io.Copy(destination, file)
 			}
@@ -296,6 +295,30 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 	return bytes.NewReader(body), nil
+}
+
+func resolveRequestFile(form *multipart.Form, ref string) (*multipart.FileHeader, error) {
+	const prefix = "request_file:"
+	if form == nil || !strings.HasPrefix(ref, prefix) {
+		return nil, fmt.Errorf("unknown file reference %q", ref)
+	}
+	token := strings.TrimPrefix(ref, prefix)
+	if files := form.File[token]; len(files) > 0 {
+		return files[0], nil
+	}
+	separator := strings.LastIndex(token, ":")
+	if separator <= 0 || separator == len(token)-1 {
+		return nil, fmt.Errorf("unknown file reference %q", ref)
+	}
+	index, err := strconv.Atoi(token[separator+1:])
+	if err != nil || index < 0 {
+		return nil, fmt.Errorf("unknown file reference %q", ref)
+	}
+	files := form.File[token[:separator]]
+	if index >= len(files) {
+		return nil, fmt.Errorf("unknown file reference %q", ref)
+	}
+	return files[index], nil
 }
 
 func maxInlineFileBytes() int64 {
@@ -369,12 +392,10 @@ func encodeFilePlaceholder(placeholder map[string]any, form *multipart.Form, lim
 	if form == nil {
 		return "", fmt.Errorf("unknown file reference %q", ref)
 	}
-	field := strings.TrimPrefix(ref, "request_file:")
-	files := form.File[field]
-	if len(files) == 0 {
-		return "", fmt.Errorf("unknown file reference %q", ref)
+	header, lookupErr := resolveRequestFile(form, ref)
+	if lookupErr != nil {
+		return "", lookupErr
 	}
-	header := files[0]
 	maxBytes := limit
 	if raw, exists := placeholder["maxBytes"]; exists {
 		n, ok := usageNumber(raw, false)
@@ -1082,8 +1103,12 @@ func (a *TaskAdaptor) submitContext(c *gin.Context, info *relaycommon.RelayInfo)
 				if form, err := common.ParseMultipartFormReusable(c); err == nil {
 					defer form.RemoveAll()
 					for field, headers := range form.File {
-						for _, header := range headers {
-							files = append(files, map[string]any{"ref": "request_file:" + field, "field": field, "filename": header.Filename, "mimeType": header.Header.Get("Content-Type"), "size": header.Size})
+						for index, header := range headers {
+							ref := "request_file:" + field
+							if len(headers) > 1 {
+								ref += ":" + strconv.Itoa(index)
+							}
+							files = append(files, map[string]any{"ref": ref, "field": field, "filename": header.Filename, "mimeType": header.Header.Get("Content-Type"), "size": header.Size})
 						}
 					}
 				}
