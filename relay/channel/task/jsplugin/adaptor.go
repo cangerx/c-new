@@ -205,12 +205,23 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	return a.submit.URL, pluginruntime.ValidateRequestURL(a.submit.URL, info.ChannelBaseUrl, a.plugin.Meta.AllowedHosts)
 }
 
-func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *relaycommon.RelayInfo) error {
+func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, _ *relaycommon.RelayInfo) error {
 	if a.submit == nil {
 		return fmt.Errorf("plugin submit request was not built")
 	}
 	for name, value := range a.submit.Headers {
 		req.Header.Set(name, value)
+	}
+	if a.submit.BodyType == "multipart" {
+		contentType := ""
+		if c != nil && c.Request != nil {
+			contentType = c.GetHeader("Content-Type")
+		}
+		mediaType, params, err := mime.ParseMediaType(contentType)
+		if err != nil || mediaType != "multipart/form-data" || strings.TrimSpace(params["boundary"]) == "" {
+			return fmt.Errorf("multipart content type is unavailable")
+		}
+		req.Header.Set("Content-Type", contentType)
 	}
 	return nil
 }
@@ -221,11 +232,19 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 	if descriptor.BodyType == "multipart" {
-		form, parseErr := common.ParseMultipartFormReusable(c)
-		if parseErr != nil {
-			return nil, parseErr
+		var form *multipart.Form
+		for _, part := range descriptor.Parts {
+			if part.FileRef == "" {
+				continue
+			}
+			var parseErr error
+			form, parseErr = common.ParseMultipartFormReusable(c)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			defer form.RemoveAll()
+			break
 		}
-		defer form.RemoveAll()
 		var body bytes.Buffer
 		writer := multipart.NewWriter(&body)
 		for _, part := range descriptor.Parts {

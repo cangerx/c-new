@@ -7,7 +7,7 @@ export const meta = {
     en: "OpenAI Sora video generation (text-to-video, image-to-video, and remix)",
     zh: "OpenAI Sora 视频生成（文生视频、图生视频、remix）",
   },
-  version: "1.0.9",
+  version: "1.0.10",
   channelTypes: [55, 1], // OpenAI-type channels natively serve sora with the same wire format
   author: { name: "QuantumNous" },
   models: ["sora-2", "sora-2-pro"],
@@ -177,6 +177,14 @@ function hasImageReference(req, hasInputReferenceFile) {
   });
 }
 
+function hasMediaField(req) {
+  return mediaFieldRules.some(function (rule) {
+    return rule.accepted.concat(Object.keys(rule.aliases)).some(function (key) {
+      return hasOwn(req, key);
+    });
+  });
+}
+
 export function buildSubmitRequest(ctx) {
   const req = ctx.requestBody || {};
   if (!String(req.prompt || "").trim()) throw new Error("field prompt is required");
@@ -186,7 +194,7 @@ export function buildSubmitRequest(ctx) {
     headers["Content-Type"] = "application/json";
     return { url: ctx.baseUrl + "/v1/videos/" + ctx.originTaskId + "/remix", method: "POST", headers, body: requestValues(req, ctx.upstreamModel), action };
   }
-  if ((ctx.files || []).length) {
+  if ((ctx.files || []).length || hasMediaField(req)) {
     const parts = [];
     const values = requestValues(req, ctx.upstreamModel);
     for (const key of Object.keys(values)) {
@@ -200,7 +208,7 @@ export function buildSubmitRequest(ctx) {
       if (values[key] === undefined || values[key] === null) continue;
       parts.push({ name: key, value: typeof values[key] === "object" ? JSON.stringify(values[key]) : values[key] });
     }
-    for (const file of ctx.files) parts.push({ name: file.field, fileRef: file.ref, filename: file.filename });
+    for (const file of ctx.files || []) parts.push({ name: file.field, fileRef: file.ref, filename: file.filename });
     return { url: ctx.baseUrl + "/v1/videos", method: "POST", headers, bodyType: "multipart", parts };
   }
   headers["Content-Type"] = "application/json";

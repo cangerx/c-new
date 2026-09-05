@@ -2,7 +2,6 @@ package plugins_test
 
 import (
 	"bytes"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -33,6 +32,21 @@ func decodeSoraPluginMap(t *testing.T, value any) map[string]any {
 	var decoded map[string]any
 	require.NoError(t, common.Unmarshal(encoded, &decoded))
 	return decoded
+}
+
+func decodeSoraPartValues(t *testing.T, value any) map[string][]any {
+	t.Helper()
+	submit := decodeSoraPluginMap(t, value)
+	require.Equal(t, "multipart", submit["bodyType"])
+	values := map[string][]any{}
+	for _, raw := range submit["parts"].([]any) {
+		part := raw.(map[string]any)
+		name := part["name"].(string)
+		if value, ok := part["value"]; ok {
+			values[name] = append(values[name], value)
+		}
+	}
+	return values
 }
 
 func TestSoraOpenAIVideoPreservesVendorFields(t *testing.T) {
@@ -74,24 +88,23 @@ func TestSoraOpenAIVideoPreservesVendorFields(t *testing.T) {
 		"requestBody":   body,
 	})
 	require.NoError(t, err)
-	submit := decodeSoraPluginMap(t, submitValue)
-	submitBody := submit["body"].(map[string]any)
-	assert.Equal(t, references, submitBody["referenceImages"])
-	assert.Equal(t, videos, submitBody["referenceVideos"])
-	assert.Equal(t, audios, submitBody["referenceAudios"])
-	assert.NotContains(t, submitBody, "reference_images")
-	assert.NotContains(t, submitBody, "reference_videos")
-	assert.NotContains(t, submitBody, "reference_audios")
+	parts := decodeSoraPartValues(t, submitValue)
+	assert.Equal(t, references, parts["referenceImages"])
+	assert.Equal(t, videos, parts["referenceVideos"])
+	assert.Equal(t, audios, parts["referenceAudios"])
+	assert.NotContains(t, parts, "reference_images")
+	assert.NotContains(t, parts, "reference_videos")
+	assert.NotContains(t, parts, "reference_audios")
 }
 
 func TestSoraReferenceMediaSurviveHTTPAdaptorSerialization(t *testing.T) {
-	var captured map[string]any
+	var captured map[string][]string
 	var captureErr error
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		defer request.Body.Close()
-		body, err := io.ReadAll(request.Body)
-		if err == nil {
-			err = common.Unmarshal(body, &captured)
+		err := request.ParseMultipartForm(1 << 20)
+		if err == nil && request.MultipartForm != nil {
+			captured = request.MultipartForm.Value
 		}
 		captureErr = err
 		response.Header().Set("Content-Type", "application/json")
@@ -112,12 +125,14 @@ func TestSoraReferenceMediaSurviveHTTPAdaptorSerialization(t *testing.T) {
 	}
 	adaptor.Init(info)
 	requestBody := map[string]any{
-		"model":           "grok-imagine-video-1.5-preview",
-		"prompt":          "simulate reference transmission",
-		"duration":        5,
-		"referenceImages": []any{"https://assets.example/one.png", "https://assets.example/two.png"},
-		"referenceVideos": []any{"https://assets.example/guide.mp4"},
-		"referenceAudios": []any{"https://assets.example/voice.mp3"},
+		"model":            "grok-imagine-video-1.5-preview",
+		"prompt":           "simulate reference transmission",
+		"duration":         15,
+		"ratio":            "9:16",
+		"resolution":       "720p",
+		"reference_images": []any{"https://assets.example/one.png", "https://assets.example/two.png"},
+		"reference_videos": []any{"https://assets.example/guide.mp4"},
+		"reference_audios": []any{"https://assets.example/voice.mp3"},
 	}
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
 	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(nil))
@@ -136,12 +151,15 @@ func TestSoraReferenceMediaSurviveHTTPAdaptorSerialization(t *testing.T) {
 	response.Body.Close()
 	require.NoError(t, captureErr)
 
-	assert.Equal(t, requestBody["referenceImages"], captured["referenceImages"])
-	assert.Equal(t, requestBody["referenceVideos"], captured["referenceVideos"])
-	assert.Equal(t, requestBody["referenceAudios"], captured["referenceAudios"])
-	assert.NotContains(t, captured, "reference_images")
-	assert.NotContains(t, captured, "reference_videos")
-	assert.NotContains(t, captured, "reference_audios")
+	assert.Equal(t, []string{"https://assets.example/one.png", "https://assets.example/two.png"}, captured["reference_images"])
+	assert.Equal(t, []string{"https://assets.example/guide.mp4"}, captured["reference_videos"])
+	assert.Equal(t, []string{"https://assets.example/voice.mp3"}, captured["reference_audios"])
+	assert.Equal(t, []string{"9:16"}, captured["ratio"])
+	assert.Equal(t, []string{"720p"}, captured["resolution"])
+	assert.Equal(t, []string{"15"}, captured["duration"])
+	assert.NotContains(t, captured, "referenceImages")
+	assert.NotContains(t, captured, "referenceVideos")
+	assert.NotContains(t, captured, "referenceAudios")
 }
 
 func TestSoraSubmitPreservesAllImageFields(t *testing.T) {
@@ -162,16 +180,15 @@ func TestSoraSubmitPreservesAllImageFields(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	submit := decodeSoraPluginMap(t, value)
-	body := submit["body"].(map[string]any)
-	assert.Equal(t, []any{"https://assets.example/one.png"}, body["images"])
-	assert.Equal(t, []any{"https://assets.example/two.png"}, body["referenceImages"])
-	assert.Equal(t, []any{map[string]any{"url": "https://assets.example/three.png"}}, body["reference_images"])
+	parts := decodeSoraPartValues(t, value)
+	assert.Equal(t, []any{"https://assets.example/one.png"}, parts["images"])
+	assert.Equal(t, []any{"https://assets.example/two.png"}, parts["referenceImages"])
+	assert.Equal(t, []any{`{"url":"https://assets.example/three.png"}`}, parts["reference_images"])
 	assert.Equal(t, []any{
 		"https://assets.example/one.png",
-		map[string]any{"image_url": map[string]any{"url": "https://assets.example/four.png"}},
-	}, body["image_urls"])
-	assert.NotContains(t, body, "reference_image_urls")
+		`{"image_url":{"url":"https://assets.example/four.png"}}`,
+	}, parts["image_urls"])
+	assert.NotContains(t, parts, "reference_image_urls")
 }
 
 func TestSoraSubmitPreservesVideoAndAudioFields(t *testing.T) {
@@ -189,13 +206,13 @@ func TestSoraSubmitPreservesVideoAndAudioFields(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	body := decodeSoraPluginMap(t, value)["body"].(map[string]any)
-	assert.Equal(t, []any{"https://assets.example/one.mp4"}, body["referenceVideos"])
-	assert.Equal(t, []any{map[string]any{"video_url": "https://assets.example/two.mp4"}}, body["reference_videos"])
-	assert.Equal(t, []any{"https://assets.example/one.mp3"}, body["audio_urls"])
-	assert.Equal(t, []any{map[string]any{"url": "https://assets.example/two.mp3"}}, body["referenceAudios"])
-	assert.NotContains(t, body, "video_references")
-	assert.NotContains(t, body, "audio_references")
+	parts := decodeSoraPartValues(t, value)
+	assert.Equal(t, []any{"https://assets.example/one.mp4"}, parts["referenceVideos"])
+	assert.Equal(t, []any{`{"video_url":"https://assets.example/two.mp4"}`}, parts["reference_videos"])
+	assert.Equal(t, []any{"https://assets.example/one.mp3"}, parts["audio_urls"])
+	assert.Equal(t, []any{`{"url":"https://assets.example/two.mp3"}`}, parts["referenceAudios"])
+	assert.NotContains(t, parts, "video_references")
+	assert.NotContains(t, parts, "audio_references")
 }
 
 func TestSoraMultipartPreservesOriginalFieldNames(t *testing.T) {
@@ -263,11 +280,15 @@ func TestSoraPreservesKnownUpstreamMediaFields(t *testing.T) {
 		"requestBody":   request,
 	})
 	require.NoError(t, err)
-	body := decodeSoraPluginMap(t, value)["body"].(map[string]any)
+	parts := decodeSoraPartValues(t, value)
 	for key, expected := range request {
-		assert.Equal(t, expected, body[key], key)
+		if list, ok := expected.([]any); ok {
+			assert.Equal(t, list, parts[key], key)
+		} else {
+			assert.Equal(t, []any{expected}, parts[key], key)
+		}
 	}
-	assert.Equal(t, "grok-imagine-video-1.5-preview", body["model"])
+	assert.Equal(t, []any{"grok-imagine-video-1.5-preview"}, parts["model"])
 }
 
 func TestSoraMultipartAllowsRepeatedMediaAndArbitraryFileFields(t *testing.T) {

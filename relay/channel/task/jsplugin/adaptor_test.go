@@ -178,6 +178,38 @@ export function parseSubmitResponse(){return {taskId:"1"}} export function build
 	assert.Equal(t, "audio-one", string(content))
 }
 
+func TestTaskAdaptorBuildsMultipartFromJSONFields(t *testing.T) {
+	source := `
+export const meta = {apiVersion:1,key:"multipart-json",name:"Multipart JSON",version:"1.0.0",author:{name:"Test"},models:["m"],fetchMode:"per_task"};
+export function buildSubmitRequest(ctx) {
+  return {url:ctx.baseUrl+"/submit",bodyType:"multipart",parts:[
+    {name:"model",value:ctx.requestBody.model},
+    {name:"reference_images",value:ctx.requestBody.reference_images[0]},
+    {name:"reference_images",value:ctx.requestBody.reference_images[1]}
+  ]};
+}
+export function parseSubmitResponse(){return {taskId:"1"}} export function buildQueryRequest(){return {url:"https://example.com"}} export function parseTaskResult(){return {status:"SUCCESS"}}
+`
+	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+	require.NoError(t, err)
+	adaptor := New(plugin)
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://provider.example"}, TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+	adaptor.Init(info)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(`{"model":"m","reference_images":["one","two"]}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("task_request", map[string]any{"model": "m", "reference_images": []any{"one", "two"}})
+
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "https://provider.example/submit", body)
+	require.NoError(t, adaptor.BuildRequestHeader(c, req, info))
+	require.Contains(t, req.Header.Get("Content-Type"), "multipart/form-data; boundary=")
+	require.NoError(t, req.ParseMultipartForm(1024))
+	assert.Equal(t, []string{"m"}, req.MultipartForm.Value["model"])
+	assert.Equal(t, []string{"one", "two"}, req.MultipartForm.Value["reference_images"])
+}
+
 func TestTaskAdaptorInlinesJSONFilePlaceholders(t *testing.T) {
 	const fileBytes = "image-bytes"
 	encoded := base64.StdEncoding.EncodeToString([]byte(fileBytes))
